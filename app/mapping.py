@@ -40,13 +40,99 @@ _CHOICE_TOKEN_PATTERNS = [
 
 _ID_CANDIDATES = ("id", "id_encuesta", "caseid", "case_id", "respondent", "respondent_id", "folio", "idnum")
 
+# Valores de "no respuesta" habituales en columnas de elección: no cuentan
+# como perfil sin traducir, así que no deben forzar al detector posicional a
+# incluirlos como si fueran un perfil más.
+_MISSING_VALUE_TOKENS = {
+    "ns/nc", "ns", "nc", "no sabe", "no contesta", "no sabe/no contesta",
+    "no sabe / no contesta", "nan", "none", "",
+}
+
 
 def _looks_like_profile_token(token: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z]{1,3}", token))
 
 
-def suggest_mapping(columns: list[str]) -> dict:
+def _looks_like_missing_value(value: str) -> bool:
+    return value.strip().casefold() in _MISSING_VALUE_TOKENS
+
+
+def infer_choice_value_map(
+    df: pd.DataFrame, choice_columns: dict[str, str], profiles: list[str]
+) -> tuple[dict[str, str], list[str]]:
+    """Deduce a qué perfil corresponde cada valor observado en las columnas de
+    elección, en vez de asumir que el valor crudo coincide literalmente con el
+    id de perfil (p. ej. que la columna valga exactamente "A"/"B").
+
+    En la práctica el valor observado casi nunca es el id de perfil pelado:
+    Stata/SPSS convierten el código a su etiqueta de valor ("Perfil A",
+    "Candidato/a 1"...), así que probamos, en orden de fiabilidad decreciente:
+
+    1. Coincidencia exacta (insensible a mayúsculas) con el id de perfil.
+    2. El id de perfil aparece como token suelto dentro del valor observado
+       (p. ej. perfil "A" dentro de "Perfil A"), y de forma no ambigua.
+    3. Correspondencia posicional por el número final del valor observado
+       (p. ej. "Candidato/a 1"/"Candidato/a 2" con perfiles ["A", "B"]),
+       solo cuando sobran tantos valores numerables como perfiles quedan
+       por asignar.
+
+    Devuelve `(choice_value_map, valores_sin_traducir)`; el segundo elemento
+    son los valores observados que no se pudieron emparejar con ningún
+    perfil (p. ej. "NS/NC"), útil para que la interfaz los muestre.
+    """
+    observed: set[str] = set()
+    for col in choice_columns.values():
+        if col in df.columns:
+            observed |= set(df[col].dropna().astype(str).unique().tolist())
+
+    value_map: dict[str, str] = {}
+
+    # 1) coincidencia exacta insensible a mayúsculas
+    for p in profiles:
+        if p in value_map.values():
+            continue
+        for v in observed:
+            if v in value_map:
+                continue
+            if v.strip().casefold() == p.strip().casefold():
+                value_map[v] = p
+                break
+
+    # 2) el id de perfil aparece como token suelto y sin ambigüedad
+    remaining_profiles = [p for p in profiles if p not in value_map.values()]
+    for p in remaining_profiles:
+        pattern = re.compile(rf"(?<![A-Za-z0-9]){re.escape(p)}(?![A-Za-z0-9])", re.IGNORECASE)
+        candidates = [v for v in observed if v not in value_map and pattern.search(v)]
+        if len(candidates) == 1:
+            value_map[candidates[0]] = p
+
+    # 3) correspondencia posicional por el número final del valor observado
+    remaining_profiles = [p for p in profiles if p not in value_map.values()]
+    if remaining_profiles:
+        numbered = []
+        for v in observed:
+            if v in value_map or _looks_like_missing_value(v):
+                continue
+            m = re.search(r"(\d+)\s*$", v.strip())
+            if m:
+                numbered.append((int(m.group(1)), v))
+        if len(numbered) >= len(remaining_profiles):
+            numbered.sort(key=lambda t: t[0])
+            for p, (_, v) in zip(remaining_profiles, numbered[: len(remaining_profiles)]):
+                value_map[v] = p
+
+    unmapped = sorted(v for v in observed if v not in value_map and not _looks_like_missing_value(v))
+    return value_map, unmapped
+
+
+def suggest_mapping(columns: list[str], df: pd.DataFrame | None = None) -> dict:
     """Propone una configuración inicial a partir de los nombres de columna.
+
+    Si se pasa `df`, además deduce el `choice_value_map` a partir de los
+    valores realmente observados en las columnas de elección (ver
+    `infer_choice_value_map`) en vez de asumir que valen literalmente el id
+    de perfil; sin `df` se mantiene el comportamiento anterior (identidad
+    perfil -> perfil) para quien solo tenga los nombres de columna.
 
     Devuelve un dict serializable (no `ConjointMappingConfig` directamente)
     con la config sugerida más la lista de columnas que no se pudieron
@@ -103,13 +189,19 @@ def suggest_mapping(columns: list[str]) -> dict:
 
     respondent_id = next((c for c in columns if c.lower() in _ID_CANDIDATES), None)
 
+    if df is not None and choice_columns:
+        choice_value_map, unmatched_choice_values = infer_choice_value_map(df, choice_columns, ordered_profiles)
+    else:
+        choice_value_map, unmatched_choice_values = {p: p for p in ordered_profiles}, []
+
     return {
         "respondent_id": respondent_id,
         "tasks": ordered_tasks,
         "profiles": ordered_profiles,
         "attributes": attributes,
         "choice_columns": choice_columns,
-        "choice_value_map": {p: p for p in ordered_profiles},
+        "choice_value_map": choice_value_map,
+        "unmatched_choice_values": unmatched_choice_values,
         "unmatched_columns": unmatched,
     }
 

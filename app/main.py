@@ -64,7 +64,7 @@ async def upload(file: UploadFile = File(...)):
         "n_rows": int(df.shape[0]),
         "n_cols": int(df.shape[1]),
         "columns": columns,
-        "suggested_mapping": mappingmod.suggest_mapping(list(df.columns)),
+        "suggested_mapping": mappingmod.suggest_mapping(list(df.columns), df),
     }
 
 
@@ -88,7 +88,7 @@ async def remove_session(session_id: str):
 @app.get("/api/mapping/{session_id}/suggest")
 async def suggest_mapping(session_id: str):
     df = _get_df_or_404(session_id)
-    return mappingmod.suggest_mapping(list(df.columns))
+    return mappingmod.suggest_mapping(list(df.columns), df)
 
 
 @app.post("/api/mapping/{session_id}/apply")
