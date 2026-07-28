@@ -21,11 +21,22 @@ _TASK_PROFILE_ATTR_RE = re.compile(
     r"^(?P<task>[A-Za-z]+\d+)_(?P<profile>[A-Za-z]{1,3})_(?P<attr>.+)$"
 )
 
-# columna de elección de una tarea, p. ej. cj1_eleccion, cj1_elige, cj1_choice
-_CHOICE_RE = re.compile(
-    r"^(?P<task>[A-Za-z]+\d+)_(?:eleccion|elige|elegido|choice|winner|pref\w*)$",
-    re.IGNORECASE,
-)
+# Columna de elección de una tarea, p. ej. cj1_eleccion, cj1_elige, cj1_choice.
+# En orden de prioridad: algunos cuestionarios tienen más de una columna que
+# casa con el patrón para la misma tarea (p. ej. "cj1_elige" como metadato de
+# diseño -qué perfil era la referencia- y "cj1_eleccion" con la letra elegida
+# de verdad). Cuando hay ambigüedad preferimos el término inequívoco
+# "elección" al abreviado "elige", que en la práctica ha resultado ser menos
+# fiable como nombre de la variable de respuesta real.
+_CHOICE_TOKEN_PATTERNS = [
+    re.compile(r"^(?P<task>[A-Za-z]+\d+)_eleccion$", re.IGNORECASE),
+    re.compile(r"^(?P<task>[A-Za-z]+\d+)_elegido$", re.IGNORECASE),
+    re.compile(r"^(?P<task>[A-Za-z]+\d+)_choice$", re.IGNORECASE),
+    re.compile(r"^(?P<task>[A-Za-z]+\d+)_winner$", re.IGNORECASE),
+    re.compile(r"^(?P<task>[A-Za-z]+\d+)_seleccion$", re.IGNORECASE),
+    re.compile(r"^(?P<task>[A-Za-z]+\d+)_elige$", re.IGNORECASE),
+    re.compile(r"^(?P<task>[A-Za-z]+\d+)_pref\w*$", re.IGNORECASE),
+]
 
 _ID_CANDIDATES = ("id", "id_encuesta", "caseid", "case_id", "respondent", "respondent_id", "folio", "idnum")
 
@@ -47,13 +58,16 @@ def suggest_mapping(columns: list[str]) -> dict:
     choice_columns: dict[str, str] = {}
     matched: set[str] = set()
 
-    for col in columns:
-        m = _CHOICE_RE.match(col)
-        if m:
+    for pattern in _CHOICE_TOKEN_PATTERNS:
+        for col in columns:
+            m = pattern.match(col)
+            if not m:
+                continue
             task = m.group("task")
-            choice_columns[task] = col
-            tasks.add(task)
-            matched.add(col)
+            if task not in choice_columns:
+                choice_columns[task] = col
+                tasks.add(task)
+            matched.add(col)  # también las columnas de menor prioridad descartadas para esa tarea
 
     for col in columns:
         if col in matched:
