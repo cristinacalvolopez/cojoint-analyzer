@@ -36,8 +36,9 @@
       <h2>Analiza tu experimento conjoint</h2>
       <p class="text-secondary">
         Sube tu base en <strong>.xlsx</strong>, <strong>.csv</strong>, <strong>Stata (.dta)</strong> o
-        <strong>SPSS (.sav)</strong> para mapear las tareas y atributos, reestructurar de formato ancho
-        a largo y estimar el AMCE. Los datos se procesan solo en memoria durante esta sesión.
+        <strong>SPSS (.sav)</strong>. Un mismo archivo puede contener varios experimentos (de elección
+        o de viñeta): se crea uno por defecto y puedes añadir los que necesites. Los datos se procesan
+        solo en memoria durante esta sesión.
       </p>
       <label id="dropzone" class="dropzone" for="fileInput">
         <span class="dropzone__icon">&#8593;</span>
@@ -52,98 +53,158 @@
   <!-- App screen -->
   <section id="appScreen" class="app-screen" hidden>
     <aside class="sidebar">
-      <nav class="stepper" id="stepper">
-        <div class="stepper__step is-active" data-step="mapping">
-          <span class="stepper__num">1</span><span>Mapeo de variables</span>
+      <div class="experiments-panel">
+        <div class="experiments-panel__header">
+          <span>Conjuntos</span>
+          <button id="addExperimentBtn" class="btn btn--icon btn--sm" title="Nuevo conjunto" aria-label="Nuevo conjunto">+</button>
         </div>
-        <div class="stepper__step" data-step="reshape">
-          <span class="stepper__num">2</span><span>Reestructuración</span>
-        </div>
-        <div class="stepper__step" data-step="amce">
-          <span class="stepper__num">3</span><span>Estimación AMCE</span>
-        </div>
-      </nav>
+        <div id="experimentsList" class="experiments-list"></div>
+      </div>
+
+      <nav class="stepper" id="stepper"></nav>
+
       <div id="sidebarSummary" class="sidebar-summary">
         <span><strong id="sumRows">–</strong> filas cargadas</span>
-        <span><strong id="sumTasks">–</strong> tareas · <strong id="sumProfiles">–</strong> perfiles</span>
+        <span id="sumFilterRow" hidden><strong id="sumFilter">–</strong></span>
+        <span id="sumConjointRow"><strong id="sumTasks">–</strong> tareas · <strong id="sumProfiles">–</strong> perfiles</span>
         <span><strong id="sumAttrs">–</strong> atributos mapeados</span>
       </div>
     </aside>
 
     <div class="content">
-      <nav class="tabs">
-        <button class="tab is-active" data-tab="mapping">1 · Mapeo de variables</button>
-        <button class="tab" data-tab="reshape">2 · Reestructuración</button>
-        <button class="tab" data-tab="amce">3 · Estimación AMCE</button>
-      </nav>
+      <nav class="tabs" id="tabs"></nav>
+
+      <!-- Filtro de submuestra (común a los dos tipos de conjunto) -->
+      <div id="sampleFilterCard" class="card">
+        <h3>Submuestra de este conjunto</h3>
+        <p class="text-secondary" style="font-size:12.5px;margin-bottom:12px">
+          Si el fichero contiene varios experimentos administrados a distintas submuestras (p. ej. una
+          columna <code>EXPERIMENTO</code>), restringe aquí este conjunto a las filas que le corresponden.
+          Déjalo vacío para usar el fichero completo.
+        </p>
+        <div class="mapping-toolbar">
+          <label class="field">
+            <span>Columna</span>
+            <select id="filterColumnSelect"><option value="">(sin filtro · todo el fichero)</option></select>
+          </label>
+          <div class="field" style="flex:1">
+            <span>Valores que pertenecen a este conjunto</span>
+            <div id="filterValuesChecklist" class="checklist"></div>
+          </div>
+          <button id="applyFilterBtn" class="btn btn--sm">Aplicar filtro</button>
+        </div>
+      </div>
 
       <!-- Paso 1: mapeo -->
       <div id="tabMapping" class="tab-panel is-active">
-        <div class="card">
-          <h3>Estructura del experimento</h3>
-          <div class="mapping-toolbar">
-            <label class="field">
-              <span>Columna identificadora del entrevistado</span>
-              <select id="respondentIdSelect"><option value="">(usar número de fila)</option></select>
-            </label>
-            <label class="field">
-              <span>Tareas detectadas</span>
-              <input id="tasksInput" type="text" placeholder="cj1, cj2, cj3…">
-            </label>
-            <label class="field">
-              <span>Perfiles por tarea</span>
-              <input id="profilesInput" type="text" placeholder="A, B">
-            </label>
-            <button id="rebuildGridBtn" class="btn btn--sm">Reconstruir tabla</button>
+
+        <!-- Variante "elección" (conjoint) -->
+        <div id="conjointMappingPanel">
+          <div class="card">
+            <h3>Estructura del experimento</h3>
+            <div class="mapping-toolbar">
+              <label class="field">
+                <span>Columna identificadora del entrevistado</span>
+                <select id="respondentIdSelect"><option value="">(usar número de fila)</option></select>
+              </label>
+              <div class="field">
+                <span>Tareas detectadas</span>
+                <div id="tasksChips" class="chip-row"></div>
+                <select id="addTaskSelect"><option value="">+ añadir tarea…</option></select>
+              </div>
+              <div class="field">
+                <span>Perfiles por tarea</span>
+                <div id="profilesChips" class="chip-row"></div>
+                <select id="addProfileSelect"><option value="">+ añadir perfil…</option></select>
+              </div>
+            </div>
+            <p class="text-secondary" style="font-size:12.5px;margin-bottom:10px">
+              Se ha intentado reconocer automáticamente el patrón
+              <code>&lt;tarea&gt;_&lt;perfil&gt;_&lt;atributo&gt;</code> (p. ej. <code>cj1_A_gen</code>) y la columna de
+              elección de cada tarea (p. ej. <code>cj1_eleccion</code>), incluida la correspondencia entre el valor
+              real de esa columna y el perfil (p. ej. "Perfil A" → A). Revisa y corrige si hace falta.
+            </p>
           </div>
-          <p class="text-secondary" style="font-size:12.5px;margin-bottom:10px">
-            Se ha intentado reconocer automáticamente el patrón
-            <code>&lt;tarea&gt;_&lt;perfil&gt;_&lt;atributo&gt;</code> (p. ej. <code>cj1_A_gen</code>) y la columna de
-            elección de cada tarea (p. ej. <code>cj1_eleccion</code>). Revisa y corrige cada celda si hace falta.
-          </p>
+
+          <div class="card">
+            <div class="var-card-header">
+              <h3>Atributos por tarea y perfil</h3>
+              <div class="var-actions">
+                <button id="addAttributeBtn" class="btn btn--sm">+ Añadir atributo</button>
+              </div>
+            </div>
+            <div id="mappingGridWrap" class="mapping-grid-wrap"></div>
+          </div>
+
+          <div class="card">
+            <h3>Columna de elección por tarea</h3>
+            <div id="choiceGridWrap" class="mapping-grid-wrap"></div>
+          </div>
+
+          <div id="unmatchedCard" class="card" hidden>
+            <h3>Columnas sin clasificar</h3>
+            <p class="text-secondary" style="font-size:12.5px">
+              No siguen el patrón detectado. No pasa nada si no las necesitas para este conjunto.
+            </p>
+            <div id="unmatchedColumns" class="unmatched-columns"></div>
+          </div>
+
+          <button id="applyMappingBtn" class="btn btn--primary">Aplicar mapeo y reestructurar</button>
+          <div id="mappingIssues" class="issue-list" style="margin-top:14px"></div>
         </div>
 
-        <div class="card">
-          <div class="var-card-header">
-            <h3>Atributos por tarea y perfil</h3>
-            <div class="var-actions">
-              <button id="addAttributeBtn" class="btn btn--sm">+ Añadir atributo</button>
+        <!-- Variante "viñeta" -->
+        <div id="vignetteMappingPanel" hidden>
+          <div class="card">
+            <h3>Estructura de la viñeta</h3>
+            <p class="text-secondary" style="font-size:12.5px;margin-bottom:14px">
+              Cada entrevistado ve un único perfil o estímulo (a veces aleatorizado entre versiones) y lo
+              valora en una variable de resultado. No hay perfiles enfrentados, así que no hace falta
+              reestructurar: cada fila del fichero ya es una observación.
+            </p>
+            <div class="mapping-toolbar">
+              <label class="field">
+                <span>Columna identificadora del entrevistado</span>
+                <select id="vignetteRespondentIdSelect"><option value="">(usar número de fila)</option></select>
+              </label>
+              <label class="field">
+                <span>Variable de resultado</span>
+                <select id="vignetteOutcomeSelect"><option value="">—</option></select>
+              </label>
             </div>
           </div>
-          <div id="mappingGridWrap" class="mapping-grid-wrap"></div>
-        </div>
 
-        <div class="card">
-          <h3>Columna de elección por tarea</h3>
-          <div id="choiceGridWrap" class="mapping-grid-wrap"></div>
-        </div>
+          <div class="card">
+            <div class="var-card-header">
+              <h3>Atributos del estímulo</h3>
+              <div class="var-actions">
+                <button id="addVignetteAttributeBtn" class="btn btn--sm">+ Añadir atributo</button>
+              </div>
+            </div>
+            <div id="vignetteAttributeGridWrap" class="mapping-grid-wrap"></div>
+          </div>
 
-        <div id="unmatchedCard" class="card" hidden>
-          <h3>Columnas sin clasificar</h3>
-          <p class="text-secondary" style="font-size:12.5px">
-            No siguen el patrón detectado. No pasa nada si no las necesitas para el conjoint.
-          </p>
-          <div id="unmatchedColumns" class="unmatched-columns"></div>
+          <button id="applyVignetteMappingBtn" class="btn btn--primary">Aplicar mapeo</button>
+          <div id="vignetteMappingIssues" class="issue-list" style="margin-top:14px"></div>
         </div>
-
-        <button id="applyMappingBtn" class="btn btn--primary">Aplicar mapeo y reestructurar</button>
-        <div id="mappingIssues" class="issue-list" style="margin-top:14px"></div>
       </div>
 
-      <!-- Paso 2: reestructuración -->
+      <!-- Paso 2: reestructuración / vista previa -->
       <div id="tabReshape" class="tab-panel">
         <div id="reshapeEmpty" class="empty-state">Aplica primero el mapeo de variables en el paso 1.</div>
         <div id="reshapeContent" hidden>
-          <div class="card">
-            <h3>Resumen de la reestructuración</h3>
-            <div id="reshapeStats" class="stat-grid"></div>
+          <div id="conjointReshapeContent">
+            <div class="card">
+              <h3>Resumen de la reestructuración</h3>
+              <div id="reshapeStats" class="stat-grid"></div>
+            </div>
+            <div id="reshapeWarnings" class="card" hidden>
+              <h3>Avisos de calidad</h3>
+              <div id="reshapeWarningsList" class="issue-list"></div>
+            </div>
           </div>
-          <div id="reshapeWarnings" class="card" hidden>
-            <h3>Avisos de calidad</h3>
-            <div id="reshapeWarningsList" class="issue-list"></div>
-          </div>
           <div class="card">
-            <h3>Vista previa del fichero largo (formato tidy)</h3>
+            <h3 id="previewTitle">Vista previa del fichero largo (formato tidy)</h3>
             <div class="table-scroll">
               <table id="reshapePreviewTable"><thead></thead><tbody></tbody></table>
             </div>
@@ -151,12 +212,12 @@
         </div>
       </div>
 
-      <!-- Paso 3: AMCE -->
+      <!-- Paso 3: estimación -->
       <div id="tabAmce" class="tab-panel">
-        <div id="amceEmpty" class="empty-state">Reestructura los datos en el paso 2 antes de estimar el AMCE.</div>
+        <div id="amceEmpty" class="empty-state">Completa el paso anterior antes de estimar el modelo.</div>
         <div id="amceContent" class="split-layout" hidden>
           <div class="split-layout__side">
-            <div class="field">
+            <div class="field" id="amceMethodField">
               <span>Método de estimación</span>
               <div class="segmented" id="amceMethodToggle" role="group" aria-label="Método de estimación">
                 <button type="button" class="segmented__btn is-active" data-method="ols">OLS (cluster por individuo)</button>
@@ -168,10 +229,10 @@
               <div id="amceAttributes" class="checklist"></div>
             </div>
             <div id="amceBaselines" style="margin-top:14px"></div>
-            <button id="runAmceBtn" class="btn btn--primary" style="margin-top:16px;width:100%">Estimar AMCE</button>
+            <button id="runAmceBtn" class="btn btn--primary" style="margin-top:16px;width:100%">Estimar</button>
           </div>
           <div class="split-layout__main">
-            <div id="amceResultEmpty" class="empty-state">Configura el modelo y pulsa "Estimar AMCE".</div>
+            <div id="amceResultEmpty" class="empty-state">Configura el modelo y pulsa "Estimar".</div>
             <div id="amceResult" hidden>
               <div class="card">
                 <h3>Ajuste del modelo</h3>
@@ -179,7 +240,7 @@
               </div>
               <div class="card">
                 <div class="dotplot-toolbar">
-                  <h3 style="margin:0">Efecto Marginal Medio (AMCE)</h3>
+                  <h3 id="amceResultTitle" style="margin:0">Efecto Marginal Medio (AMCE)</h3>
                   <div style="display:flex;gap:8px">
                     <button id="exportSvgBtn" class="btn btn--sm">Exportar SVG</button>
                     <button id="exportPngBtn" class="btn btn--sm">Exportar PNG</button>

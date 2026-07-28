@@ -53,6 +53,42 @@ def _looks_like_profile_token(token: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z]{1,3}", token))
 
 
+def _task_sort_key(t: str):
+    digits = re.search(r"\d+", t)
+    return (t[: digits.start()] if digits else t, int(digits.group()) if digits else 0)
+
+
+_TASK_TOKEN_RE = re.compile(r"^([A-Za-z]+\d+)_")
+
+
+def candidate_tasks(columns: list[str]) -> list[str]:
+    """Todas las tareas que aparecen como prefijo `<tarea>_` en algún nombre de
+    columna, aunque esa columna en concreto no haya podido clasificarse como
+    atributo o elección. Sirve para poblar el selector de "añadir tarea" en la
+    interfaz: nunca hay que escribir el nombre de una tarea a mano, se elige
+    de esta lista.
+    """
+    found: set[str] = set()
+    for col in columns:
+        m = _TASK_TOKEN_RE.match(col)
+        if m:
+            found.add(m.group(1))
+    return sorted(found, key=_task_sort_key)
+
+
+def candidate_profiles(columns: list[str]) -> list[str]:
+    """Todos los tokens de perfil que aparecen en el patrón
+    `<tarea>_<perfil>_<atributo>` en cualquier columna del fichero, para
+    poblar el selector de "añadir perfil" sin caja de texto libre.
+    """
+    found: set[str] = set()
+    for col in columns:
+        m = _TASK_PROFILE_ATTR_RE.match(col)
+        if m and _looks_like_profile_token(m.group("profile")):
+            found.add(m.group("profile"))
+    return sorted(found)
+
+
 def _looks_like_missing_value(value: str) -> bool:
     return value.strip().casefold() in _MISSING_VALUE_TOKENS
 
@@ -171,10 +207,6 @@ def suggest_mapping(columns: list[str], df: pd.DataFrame | None = None) -> dict:
 
     unmatched = [c for c in columns if c not in matched]
 
-    def _task_sort_key(t: str):
-        digits = re.search(r"\d+", t)
-        return (t[: digits.start()] if digits else t, int(digits.group()) if digits else 0)
-
     ordered_tasks = sorted(tasks, key=_task_sort_key)
     ordered_profiles = sorted(profiles)
 
@@ -203,6 +235,8 @@ def suggest_mapping(columns: list[str], df: pd.DataFrame | None = None) -> dict:
         "choice_value_map": choice_value_map,
         "unmatched_choice_values": unmatched_choice_values,
         "unmatched_columns": unmatched,
+        "candidate_tasks": candidate_tasks(columns),
+        "candidate_profiles": candidate_profiles(columns),
     }
 
 

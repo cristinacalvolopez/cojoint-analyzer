@@ -17,6 +17,46 @@ import pyreadstat
 SUPPORTED_EXTENSIONS = (".xlsx", ".xls", ".dta", ".sav", ".csv")
 
 
+def _fix_mojibake(text: str) -> str:
+    """Repara texto UTF-8 que se decodificó como si fuera latin-1.
+
+    Los ficheros .dta con formato < 118 (Stata < 15) no declaran su propia
+    codificación y pandas asume latin-1 por defecto (`StataReader._set_encoding`),
+    pero en la práctica muchos de estos ficheros —sobre todo si se generaron o
+    reexportaron con herramientas no-Stata— contienen texto en UTF-8. El
+    resultado son acentos corruptos tipo "uÃ±as" en vez de "uñas".
+
+    Solo se corrige si el reintento de decodificación como UTF-8 tiene éxito:
+    como latin-1 nunca falla al decodificar, ese es justo el caso donde el
+    texto original ya iba en UTF-8 y pandas lo decodificó mal; si no es UTF-8
+    válido, se asume que el texto ya estaba bien y se deja tal cual.
+    """
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return text
+
+
+def _fix_mojibake_column(series: pd.Series) -> pd.Series:
+    if isinstance(series.dtype, pd.CategoricalDtype):
+        fixed_categories = [_fix_mojibake(str(c)) for c in series.cat.categories]
+        if fixed_categories == list(series.cat.categories.astype(str)):
+            return series
+        if len(set(fixed_categories)) != len(fixed_categories):
+            return series  # dos categorías distintas colapsarían en una: no tocar
+        return series.cat.rename_categories(fixed_categories)
+    if series.dtype == object:
+        return series.map(lambda v: _fix_mojibake(v) if isinstance(v, str) else v)
+    return series
+
+
+def _fix_mojibake_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    for col in df.columns:
+        if isinstance(df[col].dtype, pd.CategoricalDtype) or df[col].dtype == object:
+            df[col] = _fix_mojibake_column(df[col])
+    return df
+
+
 def _dedupe_value_labels(mapping: dict[float, str]) -> dict[float, str]:
     """Si dos códigos comparten el mismo texto de etiqueta, pandas no puede
     construir un Categorical porque las categorías deben ser únicas.
@@ -74,8 +114,9 @@ def _read_stata(buf: io.BytesIO) -> tuple[pd.DataFrame, dict[str, str]]:
             if labelset in value_labels_by_set
         }
         df = _apply_stata_value_labels(df, value_labels_by_var)
+    df = _fix_mojibake_dataframe(df)
     raw_labels = reader.variable_labels()
-    labels = {col: (raw_labels.get(col) or str(col)) for col in df.columns}
+    labels = {col: _fix_mojibake(raw_labels.get(col) or str(col)) for col in df.columns}
     return df, labels
 
 

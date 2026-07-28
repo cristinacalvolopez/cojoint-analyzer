@@ -35,7 +35,7 @@ def category_levels(series: pd.Series) -> list[str]:
     return sorted(values, key=_natural_sort_key)
 
 
-def _build_design_matrix(
+def build_design_matrix(
     df: pd.DataFrame, attributes: list[str], baselines: dict[str, str]
 ) -> tuple[pd.DataFrame, list[dict], dict[str, str]]:
     X = pd.DataFrame(index=df.index)
@@ -75,7 +75,7 @@ def _prepare_data(long_df: pd.DataFrame, attributes: list[str]) -> pd.DataFrame:
     return sub
 
 
-def _format_coefficients(
+def format_coefficients(
     params: pd.Series, bse: pd.Series, pvalues: pd.Series, conf_int: pd.DataFrame, meta: list[dict]
 ) -> list[dict]:
     meta_by_col = {m["column"]: m for m in meta}
@@ -106,7 +106,7 @@ def run_ols_amce(long_df: pd.DataFrame, attributes: list[str], baselines: dict[s
     sub = _prepare_data(long_df, attributes)
 
     y = sub["chosen"].astype(float)
-    X, meta, baseline_map = _build_design_matrix(sub, attributes, baselines)
+    X, meta, baseline_map = build_design_matrix(sub, attributes, baselines)
     X = sm.add_constant(X, has_constant="add")
 
     try:
@@ -122,7 +122,7 @@ def run_ols_amce(long_df: pd.DataFrame, attributes: list[str], baselines: dict[s
         "n_choice_sets": int(sub["choice_set"].nunique()),
         "r_squared": float(model.rsquared),
         "baselines": baseline_map,
-        "coefficients": _format_coefficients(model.params, model.bse, model.pvalues, conf_int, meta),
+        "coefficients": format_coefficients(model.params, model.bse, model.pvalues, conf_int, meta),
     }
 
 
@@ -145,7 +145,7 @@ def run_clogit_amce(long_df: pd.DataFrame, attributes: list[str], baselines: dic
         )
 
     y = sub["chosen"].astype(float)
-    X, meta, baseline_map = _build_design_matrix(sub, attributes, baselines)
+    X, meta, baseline_map = build_design_matrix(sub, attributes, baselines)
 
     try:
         model = ConditionalLogit(y, X, groups=sub["choice_set"]).fit(disp=0)
@@ -161,7 +161,7 @@ def run_clogit_amce(long_df: pd.DataFrame, attributes: list[str], baselines: dic
         "choice_sets_dropped": int(dropped),
         "log_likelihood": float(model.llf),
         "baselines": baseline_map,
-        "coefficients": _format_coefficients(model.params, model.bse, model.pvalues, conf_int, meta),
+        "coefficients": format_coefficients(model.params, model.bse, model.pvalues, conf_int, meta),
     }
 
 
