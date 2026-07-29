@@ -335,6 +335,46 @@
           </div>
         </div>
       </div>
+
+      <!-- Paso 4 (solo viñeta): tablas comparativas -->
+      <div id="tabTables" class="tab-panel">
+        <div class="card">
+          <h3>Comparar variables por atributo</h3>
+          <p class="text-secondary" style="font-size:12.5px;margin-bottom:14px">
+            Elige una o varias variables de resultado (no hace falta que sea "la" variable de la estimación) y
+            genera, para cada una, una tabla cruzada por cada atributo ya mapeado — recuentos, porcentajes y,
+            si la variable es numérica, la media por grupo.
+          </p>
+          <div class="mapping-toolbar" style="margin-bottom:10px">
+            <input id="tablesColumnSearch" type="text" class="search-input" placeholder="Buscar variable…" style="max-width:320px">
+            <button id="openRecodeBtn" class="btn btn--sm">+ Recodificar variable</button>
+          </div>
+          <div id="tablesColumnChecklist" class="checklist" style="max-height:260px"></div>
+          <button id="generateTablesBtn" class="btn btn--primary" style="margin-top:14px">Generar tablas</button>
+        </div>
+
+        <div id="tablesResultEmpty" class="empty-state">Elige variables arriba y pulsa "Generar tablas".</div>
+        <div id="tablesResult" hidden></div>
+
+        <div class="card">
+          <div class="var-card-header">
+            <h3>Conjunto de respuesta múltiple</h3>
+          </div>
+          <p class="text-secondary" style="font-size:12.5px;margin-bottom:14px">
+            Para preguntas donde se puede marcar más de una opción (p. ej. "¿cuáles crees que son los motivos…?",
+            una columna por opción). Añade las columnas que forman el conjunto y, si quieres, desglosa por un
+            atributo ya mapeado.
+          </p>
+          <div id="multiResponseItemsWrap"></div>
+          <button id="addMultiResponseItemBtn" class="btn btn--sm" style="margin-top:8px">+ Añadir opción</button>
+          <label class="field" style="margin-top:14px;max-width:280px">
+            <span>Desglosar por atributo (opcional)</span>
+            <select id="multiResponseGroupSelect"><option value="">(sin desglosar)</option></select>
+          </label>
+          <button id="runMultiResponseBtn" class="btn btn--primary" style="margin-top:14px">Calcular</button>
+          <div id="multiResponseResult" style="margin-top:16px"></div>
+        </div>
+      </div>
     </div>
   </section>
 </main>

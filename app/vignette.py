@@ -42,7 +42,7 @@ _ID_CANDIDATES = (
 _LEADING_NUMBER_RE = re.compile(r"^\s*(-?\d+(?:[.,]\d+)?)")
 
 
-def _coerce_scale_numeric(series: pd.Series) -> pd.Series:
+def coerce_scale_numeric(series: pd.Series) -> pd.Series:
     numeric = pd.to_numeric(series, errors="coerce")
     unresolved = numeric.isna() & series.notna()
     if unresolved.any():
@@ -62,7 +62,7 @@ def suggest_outcome_columns(df: pd.DataFrame, labels: dict[str, str] | None = No
     for col in df.columns:
         if _SCALE_META_SUFFIX_RE.search(col) or col.lower() in _ID_CANDIDATES:
             continue
-        series = _coerce_scale_numeric(df[col])
+        series = coerce_scale_numeric(df[col])
         n_valid = series.notna().sum()
         if n_valid == 0:
             continue
@@ -98,7 +98,7 @@ def validate_vignette_config(df: pd.DataFrame, config: VignetteMappingConfig) ->
     if config.outcome_column not in df.columns:
         issues.append(f'La columna de resultado "{config.outcome_column}" no existe en el fichero.')
     else:
-        n_numeric = _coerce_scale_numeric(df[config.outcome_column]).notna().sum()
+        n_numeric = coerce_scale_numeric(df[config.outcome_column]).notna().sum()
         if n_numeric == 0:
             issues.append(
                 f'La columna de resultado "{config.outcome_column}" no tiene ningún valor numérico.'
@@ -117,7 +117,7 @@ def run_vignette_ols(df: pd.DataFrame, config: VignetteMappingConfig, baselines:
     column_by_attr = {a.name: a.column for a in config.attributes}
 
     sub = pd.DataFrame(index=df.index)
-    sub["_outcome"] = _coerce_scale_numeric(df[config.outcome_column])
+    sub["_outcome"] = coerce_scale_numeric(df[config.outcome_column])
     for attr, col in column_by_attr.items():
         sub[attr] = df[col]
 

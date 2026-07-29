@@ -4,7 +4,7 @@ import pytest
 
 from app.schema import VignetteAttributeMapping, VignetteMappingConfig
 from app.vignette import (
-    _coerce_scale_numeric,
+    coerce_scale_numeric,
     run_vignette_ols,
     suggest_attribute_columns,
     suggest_outcome_columns,
@@ -69,7 +69,7 @@ def test_coerce_scale_numeric_handles_labelled_scale_endpoints():
     en la práctica son las respuestas más frecuentes de cualquier escala.
     """
     series = pd.Series(["10 Muy grave", "9", "8", "0 Nada grave", None])
-    result = _coerce_scale_numeric(series)
+    result = coerce_scale_numeric(series)
     assert result.tolist()[:4] == [10.0, 9.0, 8.0, 0.0]
     assert pd.isna(result.iloc[4])
 

@@ -5,7 +5,10 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+import pandas as pd
+
 from . import amce as amcemod
+from . import crosstab as crosstabmod
 from . import design_join as designmod
 from . import export as exportmod
 from . import mapping as mappingmod
@@ -16,10 +19,13 @@ from .readers import read_dataset
 from .schema import (
     AmceRequest,
     ConjointMappingConfig,
+    CrosstabRequest,
     ExperimentCreate,
     ExperimentDuplicate,
     ExperimentUpdate,
     ExternalDesignMappingConfig,
+    MultiResponseRequest,
+    RecodeRequest,
     SampleFilter,
     VignetteEstimateRequest,
     VignetteMappingConfig,
@@ -123,6 +129,41 @@ async def column_values(session_id: str, column: str, limit: int = 50):
     counts = df[column].astype(str).value_counts(dropna=False)
     values = [{"value": v, "n": int(n)} for v, n in counts.items()]
     return {"values": values[:limit], "n_distinct": int(len(counts))}
+
+
+_RECODE_OPERATORS = {
+    ">=": lambda s, t: s >= t,
+    ">": lambda s, t: s > t,
+    "<=": lambda s, t: s <= t,
+    "<": lambda s, t: s < t,
+    "==": lambda s, t: s == t,
+}
+
+
+@app.post("/api/columns/{session_id}/recode")
+async def recode_column(session_id: str, payload: RecodeRequest):
+    df = _get_df_or_404(session_id)
+    if payload.source_column not in df.columns:
+        raise HTTPException(404, f'La columna "{payload.source_column}" no existe en el fichero.')
+    if payload.new_column in df.columns:
+        raise HTTPException(400, f'Ya existe una columna llamada "{payload.new_column}".')
+
+    numeric = vignettemod.coerce_scale_numeric(df[payload.source_column])
+    if numeric.notna().sum() == 0:
+        raise HTTPException(400, f'La columna "{payload.source_column}" no tiene ningún valor numérico que recodificar.')
+
+    condition = _RECODE_OPERATORS[payload.operator](numeric, payload.threshold)
+    recoded = pd.Series(pd.NA, index=df.index, dtype="object")
+    recoded[numeric.notna() & condition] = payload.true_label
+    recoded[numeric.notna() & ~condition] = payload.false_label
+
+    label = payload.new_label or f"{payload.new_column} ({payload.source_column} {payload.operator} {payload.threshold:g})"
+    store.add_derived_column(session_id, payload.new_column, recoded, label)
+
+    df = store.get_df(session_id)
+    labels = store.get_labels(session_id)
+    columns = [{"name": c, "label": labels.get(c, c)} for c in df.columns]
+    return {"columns": columns, "new_column": payload.new_column}
 
 
 @app.delete("/api/session/{session_id}")
@@ -329,6 +370,59 @@ async def estimate_vignette(session_id: str, experiment_id: str, payload: Vignet
 
     result["plot_rows"] = amcemod.to_plot_rows(result)
     return result
+
+
+@app.post("/api/vignette/{session_id}/{experiment_id}/crosstab")
+async def vignette_crosstab(session_id: str, experiment_id: str, payload: CrosstabRequest):
+    """Tabla cruzada de cada variable de `outcome_columns` por cada atributo
+    ya mapeado en este conjunto — no hace falta elegir una única variable de
+    resultado ni volver a mapear nada. Relee el fichero filtrado en el
+    momento (no la copia guardada al aplicar el mapeo) para que una
+    recodificación añadida después también esté disponible."""
+    _require_kind(session_id, experiment_id, "vignette")
+    _get_long_df_or_400(session_id, experiment_id)  # exige que ya se haya aplicado el mapeo
+    mapping_config = store.get_experiment_mapping(session_id, experiment_id)
+    df = store.get_filtered_df(session_id, experiment_id)
+    labels = store.get_labels(session_id)
+
+    unknown = [c for c in payload.outcome_columns if c not in df.columns]
+    if unknown:
+        raise HTTPException(400, f"Columna no encontrada: {', '.join(unknown)}.")
+
+    tables = []
+    for outcome_col in payload.outcome_columns:
+        outcome_label = labels.get(outcome_col, outcome_col)
+        for attr in mapping_config.attributes:
+            tables.append(
+                crosstabmod.build_crosstab(df, outcome_col, outcome_label, attr.column, attr.label or attr.name)
+            )
+    return {"tables": tables}
+
+
+@app.post("/api/vignette/{session_id}/{experiment_id}/multi-response")
+async def vignette_multi_response(session_id: str, experiment_id: str, payload: MultiResponseRequest):
+    """Resumen de un conjunto de respuesta múltiple (p. ej. "¿cuáles crees
+    que son los motivos...?" con una columna binaria por motivo), desglosado
+    opcionalmente por un atributo ya mapeado en este conjunto."""
+    _require_kind(session_id, experiment_id, "vignette")
+    _get_long_df_or_400(session_id, experiment_id)
+    mapping_config = store.get_experiment_mapping(session_id, experiment_id)
+    df = store.get_filtered_df(session_id, experiment_id)
+
+    unknown = [it.column for it in payload.items if it.column not in df.columns]
+    if unknown:
+        raise HTTPException(400, f"Columna no encontrada: {', '.join(unknown)}.")
+
+    group_column = None
+    group_label = None
+    if payload.group_attribute:
+        attr = next((a for a in mapping_config.attributes if a.name == payload.group_attribute), None)
+        if attr is None:
+            raise HTTPException(400, f'Atributo no mapeado: "{payload.group_attribute}".')
+        group_column, group_label = attr.column, attr.label or attr.name
+
+    items = [{"column": it.column, "label": it.label, "selected_value": it.selected_value} for it in payload.items]
+    return crosstabmod.build_multi_response_summary(df, items, group_column, group_label)
 
 
 # ---------- Mapeo (conjuntos de tipo "elección con diseño externo") ----------

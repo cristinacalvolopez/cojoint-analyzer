@@ -117,6 +117,36 @@ class ExternalDesignMappingConfig(BaseModel):
         return [a.name for a in self.attributes]
 
 
+class RecodeRequest(BaseModel):
+    """Crea una nueva columna dicotómica derivada de una columna numérica
+    existente (p. ej. "grave" = 1 si `EXP2_P2` >= 8, si no 0), disponible
+    después en cualquier selector de columnas de la sesión."""
+    source_column: str = Field(min_length=1)
+    new_column: str = Field(min_length=1)
+    new_label: str = ""
+    operator: Literal[">=", ">", "<=", "<", "=="] = ">="
+    threshold: float
+    true_label: str = "Sí"
+    false_label: str = "No"
+
+
+class CrosstabRequest(BaseModel):
+    """Tabla cruzada de cada una de `outcome_columns` por cada atributo ya
+    mapeado en el conjunto de viñeta (no hace falta re-mapear nada)."""
+    outcome_columns: list[str] = Field(min_length=1)
+
+
+class MultiResponseItem(BaseModel):
+    column: str = Field(min_length=1)
+    label: str = ""
+    selected_value: str | None = None
+
+
+class MultiResponseRequest(BaseModel):
+    items: list[MultiResponseItem] = Field(min_length=1)
+    group_attribute: str | None = None  # nombre del atributo ya mapeado para desglosar, si se quiere
+
+
 class AmceRequest(BaseModel):
     method: str = Field(default="ols", pattern="^(ols|clogit)$")
     attributes: list[str] | None = None  # None = todos los mapeados

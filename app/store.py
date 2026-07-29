@@ -64,6 +64,16 @@ def delete_session(session_id: str) -> None:
     _SESSIONS.pop(session_id, None)
 
 
+def add_derived_column(session_id: str, name: str, series: pd.Series, label: str) -> None:
+    """Añade una columna calculada (p. ej. una recodificación) al dataframe
+    de la sesión, disponible de inmediato en cualquier selector de columnas
+    — incluidos los conjuntos ya mapeados, que releen el fichero filtrado
+    en el momento de calcular en vez de guardar una copia estática."""
+    session = _get_record(session_id)
+    session["df"][name] = series
+    session["labels"][name] = label or name
+
+
 # ---------- Conjuntos (experimentos) ----------
 
 

@@ -48,6 +48,9 @@ suite.
                                     del fichero reestructurado
 ```
 
+(No representado en el diagrama por espacio: `app/crosstab.py`, tablas
+comparativas y conjuntos de respuesta múltiple para conjuntos de viñeta.)
+
 ### Conjuntos: varios experimentos por sesión
 
 `app/store.py` guarda, por sesión, el dataframe original **y una colección
@@ -125,7 +128,7 @@ es una observación completa.
    heurístico puede fallar (p. ej. una escala 0–10 con techo, donde casi
    todos contestan el máximo y apenas se observan 3–4 valores distintos en
    una submuestra pequeña).
-   `_coerce_scale_numeric()` además recupera escalas donde SPSS/Stata solo
+   `coerce_scale_numeric()` además recupera escalas donde SPSS/Stata solo
    etiquetan los extremos (código 10 → texto "10 Muy grave", código 0 →
    "0 Nada grave") dejando los códigos intermedios como número puro: una
    conversión numérica directa perdería justo esos extremos, que suelen ser
@@ -133,6 +136,24 @@ es una observación completa.
 2. **Estimación** (`run_vignette_ols`): OLS del resultado sobre dummies de
    cada atributo, con errores robustos (`cov_type="HC1"`); mismo formato de
    coeficientes que el AMCE, así que reutiliza el mismo dot plot y tabla.
+3. **Tablas comparativas** (`app/crosstab.py`, paso "Tablas" del asistente):
+   para cuando no hay una única variable dependiente y lo que interesa es
+   comparar varias preguntas a la vez por el atributo que le tocó a cada
+   entrevistado (p. ej. un experimento con siete variables de resultado
+   distintas, todas frente al mismo texto/foto mostrado). `build_crosstab()`
+   cruza cualquier variable elegida (no solo la mapeada como "resultado")
+   contra cada atributo ya mapeado — recuentos, % de columna y, si la
+   variable es numérica, media/mediana/desviación típica por grupo — sin
+   tener que volver a mapear nada ni comprometerse a una única variable.
+   `build_multi_response_summary()` cubre además "conjuntos de respuesta
+   múltiple" (preguntas de marca-todas-las-que-apliquen, una columna binaria
+   por opción): % de casos que marcó cada opción, con la base = quienes
+   respondieron algo en ese conjunto (no el total de la muestra), desglosable
+   por un atributo. Por último, `POST /api/columns/{sesión}/recode` permite
+   crear una columna dicotómica derivada de cualquier numérica (p. ej. una
+   escala 0-10 recodificada a "grave"/"no grave"), disponible de inmediato en
+   toda la sesión — útil para leer una escala como un simple % en vez de una
+   tabla de 11 filas.
 
 ### Flujo funcional — conjuntos de tipo "elección con diseño externo"
 
@@ -217,6 +238,7 @@ cojoint-analyzer/
 │   ├── amce.py           # estimación AMCE (OLS clustered / clogit) + utilidades compartidas
 │   ├── vignette.py       # detección, validación y estimación OLS para conjuntos de viñeta
 │   ├── design_join.py     # cruce fichero de diseño externo × respuestas (conjoint_design)
+│   ├── crosstab.py        # tablas comparativas y conjuntos de respuesta múltiple (viñeta)
 │   ├── export.py          # descarga del fichero reestructurado/mapeado en xlsx/sav/dta/csv
 │   └── store.py          # sesiones en memoria: dataset + colección de conjuntos
 ├── static/
@@ -233,6 +255,8 @@ cojoint-analyzer/
 │   ├── test_export.py
 │   ├── test_design_join.py
 │   ├── test_design_join_api.py
+│   ├── test_crosstab.py
+│   ├── test_crosstab_api.py
 │   └── test_api.py        # integración: varios conjuntos por sesión, filtro, viñeta, descargas
 ├── sample_data/
 │   └── generate_sample.py # genera un CSV ancho de ejemplo (300 x 8 tareas x 2 perfiles)

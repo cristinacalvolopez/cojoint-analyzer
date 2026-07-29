@@ -101,7 +101,12 @@
         vez de tener que subir varios archivos o perder el trabajo ya hecho.</p>
         <ul>
           <li><strong>Elección</strong>: perfiles enfrentados (A vs B…) de los que el entrevistado elige uno → AMCE.</li>
-          <li><strong>Viñeta</strong>: un único perfil o estímulo, valorado en una escala → estimación por OLS.</li>
+          <li><strong>Viñeta</strong>: un único perfil o estímulo, valorado en una escala → estimación por OLS. Puedes
+          añadir <strong>varios atributos</strong> a la vez (p. ej. el texto mostrado y, por separado, la foto
+          mostrada, si el estímulo varió en más de una dimensión a la vez). La variable de resultado se elige de un
+          desplegable con dos grupos: "Sugeridas" y "Todas las demás columnas" — si la que buscas no sale entre las
+          sugeridas (p. ej. porque en una submuestra pequeña casi todo el mundo respondió el mismo valor y hay pocos
+          niveles distintos), sigue estando disponible en el segundo grupo.</li>
         </ul>
         <p>Cada conjunto de la barra lateral se puede renombrar (✎), duplicar como plantilla (⧉, copia el mapeo
         ya hecho para no repetirlo) o eliminar (×). Cambiar de conjunto no borra el trabajo de los demás.</p>`,
@@ -189,6 +194,26 @@
         números, con error estándar y p-valor. Puedes exportar el gráfico en SVG/PNG y los coeficientes en CSV.</p>
         <p>En conjuntos de tipo Viñeta el resultado se lee igual, pero el efecto es sobre la variable de resultado
         continua, no sobre la probabilidad de ser elegido.</p>`,
+    },
+    {
+      id: "help-tablas",
+      title: "9 · Tablas comparativas (solo viñeta)",
+      body: `
+        <p>Cuando no hay una única variable dependiente clara y lo que interesa es comparar varias preguntas a la
+        vez según el estímulo que le tocó a cada entrevistado, este paso evita tener que elegir "la" variable de
+        resultado y repetir la estimación una y otra vez.</p>
+        <ul>
+          <li><strong>Comparar variables por atributo</strong>: marca en la lista (con buscador) tantas variables
+          de resultado como quieras y pulsa "Generar tablas". Por cada una y cada atributo ya mapeado obtienes una
+          tabla cruzada (recuentos y % por columna) y, si la variable es numérica, la media por grupo.</li>
+          <li><strong>+ Recodificar variable</strong>: crea una nueva columna dicotómica a partir de una numérica
+          (p. ej. "grave" = Sí si la gravedad es ≥ 8), útil para leer una escala de 0-10 como un simple % en vez de
+          11 filas. La columna nueva queda disponible de inmediato en la lista de variables.</li>
+          <li><strong>Conjunto de respuesta múltiple</strong>: para preguntas de marca-todas-las-que-apliquen, con
+          una columna binaria por opción (p. ej. "¿cuáles crees que son los motivos…?"). Añade cada columna con su
+          etiqueta y, si quieres, desglosa por un atributo ya mapeado; el % se calcula sobre quienes respondieron
+          algo en ese conjunto, no sobre el total de la muestra.</li>
+        </ul>`,
     },
   ];
 
@@ -487,6 +512,7 @@
       renderVignetteMappingStep();
       renderVignetteReshapeStepForActive();
       renderAmceStepForActive();
+      renderTablesStep();
     } else {
       await ensureDesignState(id);
       renderDesignMappingStep();
@@ -573,23 +599,28 @@
   // Stepper / tabs dinámicos según el tipo de conjunto
   // =====================================================================
 
-  const STEP_LABELS = {
-    conjoint: ["Mapeo de variables", "Reestructuración", "Estimación AMCE"],
-    vignette: ["Mapeo de variables", "Vista previa", "Estimación"],
-    conjoint_design: ["Mapeo y cruce del diseño", "Reestructuración", "Estimación AMCE"],
+  const STEPS_BY_KIND = {
+    conjoint: ["mapping", "reshape", "amce"],
+    vignette: ["mapping", "reshape", "amce", "tables"],
+    conjoint_design: ["mapping", "reshape", "amce"],
   };
-  const STEPS = ["mapping", "reshape", "amce"];
+  const STEP_LABELS = {
+    conjoint: { mapping: "Mapeo de variables", reshape: "Reestructuración", amce: "Estimación AMCE" },
+    vignette: { mapping: "Mapeo de variables", reshape: "Vista previa", amce: "Estimación", tables: "Tablas comparativas" },
+    conjoint_design: { mapping: "Mapeo y cruce del diseño", reshape: "Reestructuración", amce: "Estimación AMCE" },
+  };
   let currentStep = "mapping";
 
   function renderStepperAndTabs(kind) {
+    const steps = STEPS_BY_KIND[kind];
     const labels = STEP_LABELS[kind];
-    el("stepper").innerHTML = STEPS.map((step, i) => `
+    el("stepper").innerHTML = steps.map((step, i) => `
       <div class="stepper__step" data-step="${step}">
-        <span class="stepper__num">${i + 1}</span><span>${escapeHtml(labels[i])}</span>
+        <span class="stepper__num">${i + 1}</span><span>${escapeHtml(labels[step])}</span>
       </div>
     `).join("");
-    el("tabs").innerHTML = STEPS.map((step, i) => `
-      <button class="tab" data-tab="${step}">${i + 1} · ${escapeHtml(labels[i])}</button>
+    el("tabs").innerHTML = steps.map((step, i) => `
+      <button class="tab" data-tab="${step}">${i + 1} · ${escapeHtml(labels[step])}</button>
     `).join("");
 
     document.querySelectorAll(".stepper__step").forEach((s) => s.addEventListener("click", () => goToStep(s.dataset.step)));
@@ -1114,6 +1145,11 @@
       summary: null,
       preview: null,
       amceResult: null,
+      tablesSelectedColumns: [],
+      tablesResult: null,
+      multiResponseItems: [{ column: "", label: "" }],
+      multiResponseGroupAttribute: "",
+      multiResponseResult: null,
     };
   }
 
@@ -1173,6 +1209,7 @@
 
   function renderVignetteAttributeGrid() {
     const vs = currentVignetteState();
+    renderMultiResponseGroupSelect(); // el desglose de "Tablas" depende de qué atributos hay mapeados
     const wrap = el("vignetteAttributeGridWrap");
     if (!vs.draft.attributes.length) {
       wrap.innerHTML = '<p class="empty-state">Añade al menos un atributo del estímulo (p. ej. la versión de texto mostrada).</p>';
@@ -1251,6 +1288,272 @@
     el("reshapeContent").hidden = false;
     renderPreviewTable(vs.preview);
   }
+
+  // =====================================================================
+  // Conjunto de tipo "viñeta" · Paso 4 · Tablas comparativas
+  // =====================================================================
+
+  function renderTablesStep() {
+    const vs = currentVignetteState();
+    renderTablesColumnChecklist();
+    renderMultiResponseGroupSelect();
+    renderMultiResponseItems();
+
+    // Sin esto, al cambiar de un conjunto con resultados a otro que todavía
+    // no los tiene, se quedaba viendo la tabla del conjunto anterior.
+    if (vs.tablesResult) {
+      renderTablesResult(vs.tablesResult);
+    } else {
+      el("tablesResultEmpty").hidden = false;
+      el("tablesResultEmpty").textContent = 'Elige variables arriba y pulsa "Generar tablas".';
+      el("tablesResult").hidden = true;
+      el("tablesResult").innerHTML = "";
+    }
+
+    if (vs.multiResponseResult) {
+      renderMultiResponseResult(vs.multiResponseResult);
+    } else {
+      el("multiResponseResult").innerHTML = "";
+    }
+  }
+
+  function renderTablesColumnChecklist(filterText) {
+    const vs = currentVignetteState();
+    const wrap = el("tablesColumnChecklist");
+    const q = (filterText || "").trim().toLowerCase();
+    const selected = new Set(vs.tablesSelectedColumns);
+    const cols = state.columns.filter((c) => {
+      if (!q) return true;
+      return c.name.toLowerCase().includes(q) || (c.label || "").toLowerCase().includes(q);
+    });
+    wrap.innerHTML = cols.map((c) => {
+      const label = c.label && c.label !== c.name ? `${c.label} (${c.name})` : c.name;
+      return `
+        <label class="checklist-item">
+          <input type="checkbox" class="tables-col-check" value="${escapeHtml(c.name)}" ${selected.has(c.name) ? "checked" : ""}>
+          <span>${escapeHtml(label)}</span>
+        </label>`;
+    }).join("") || '<p class="text-muted" style="font-size:12.5px;padding:6px">Sin coincidencias.</p>';
+
+    wrap.querySelectorAll(".tables-col-check").forEach((cb) => {
+      cb.addEventListener("change", (e) => {
+        if (e.target.checked) vs.tablesSelectedColumns.push(e.target.value);
+        else vs.tablesSelectedColumns = vs.tablesSelectedColumns.filter((c) => c !== e.target.value);
+      });
+    });
+  }
+
+  el("tablesColumnSearch").addEventListener("input", (e) => renderTablesColumnChecklist(e.target.value));
+
+  el("generateTablesBtn").addEventListener("click", async () => {
+    const vs = currentVignetteState();
+    if (!vs.summary) { alert('Aplica primero el mapeo en el paso "Mapeo de variables".'); return; }
+    if (!vs.tablesSelectedColumns.length) { alert("Elige al menos una variable."); return; }
+    try {
+      const result = await postJson(
+        `/api/vignette/${state.sessionId}/${state.activeExperimentId}/crosstab`,
+        { outcome_columns: vs.tablesSelectedColumns }
+      );
+      vs.tablesResult = result;
+      renderTablesResult(result);
+    } catch (err) {
+      el("tablesResultEmpty").hidden = false;
+      el("tablesResultEmpty").textContent = err.message;
+      el("tablesResult").hidden = true;
+    }
+  });
+
+  function renderTablesResult(result) {
+    el("tablesResultEmpty").hidden = true;
+    el("tablesResult").hidden = false;
+    el("tablesResult").innerHTML = result.tables.map((t) => renderCrosstabCard(t)).join("");
+  }
+
+  function renderCrosstabCard(t) {
+    if (!t.n) {
+      return `<div class="card"><h3>${escapeHtml(t.outcome_label)} × ${escapeHtml(t.group_label)}</h3>
+        <p class="empty-state">Sin filas con ambos valores presentes.</p></div>`;
+    }
+    let summaryHtml = "";
+    if (t.numeric_summary) {
+      summaryHtml = '<div class="stat-grid" style="margin-bottom:16px">' + t.group_levels.map((level) => {
+        const s = t.numeric_summary[level];
+        return `<div class="stat-tile"><span class="stat-tile__label">${escapeHtml(level)} (n=${s.n})</span><span class="stat-tile__value">${fmt(s.mean, 2)}</span></div>`;
+      }).join("") + `<div class="stat-tile"><span class="stat-tile__label">Total (n=${t.numeric_summary.__total__.n})</span><span class="stat-tile__value">${fmt(t.numeric_summary.__total__.mean, 2)}</span></div></div>`;
+    }
+    let tableHtml = '<div class="table-scroll"><table><thead><tr><th></th>' +
+      t.group_levels.map((l) => `<th>${escapeHtml(l)}</th>`).join("") + "</tr></thead><tbody>";
+    for (const row of t.row_levels) {
+      tableHtml += `<tr><th>${escapeHtml(row)}</th>` + t.group_levels.map((level) => {
+        const n = t.counts[row][level];
+        const pct = t.percentages[row][level];
+        return `<td>${fmt(pct, 1)}% <span class="text-muted">(${n})</span></td>`;
+      }).join("") + "</tr>";
+    }
+    tableHtml += `<tr><th>Total</th>` + t.group_levels.map((l) => `<td><strong>${t.column_totals[l]}</strong></td>`).join("") + "</tr>";
+    tableHtml += "</tbody></table></div>";
+
+    return `<div class="card">
+      <h3>${escapeHtml(t.outcome_label)} × ${escapeHtml(t.group_label)}</h3>
+      ${summaryHtml}
+      ${tableHtml}
+    </div>`;
+  }
+
+  // ---------- Conjunto de respuesta múltiple ----------
+
+  function renderMultiResponseGroupSelect() {
+    const vs = currentVignetteState();
+    const select = el("multiResponseGroupSelect");
+    const attrs = vs.draft.attributes || [];
+    select.innerHTML = '<option value="">(sin desglosar)</option>' +
+      attrs.map((a) => `<option value="${escapeHtml(a.name)}" ${a.name === vs.multiResponseGroupAttribute ? "selected" : ""}>${escapeHtml(a.label || a.name)}</option>`).join("");
+  }
+  el("multiResponseGroupSelect").addEventListener("change", (e) => {
+    currentVignetteState().multiResponseGroupAttribute = e.target.value;
+  });
+
+  function renderMultiResponseItems() {
+    const vs = currentVignetteState();
+    const wrap = el("multiResponseItemsWrap");
+    wrap.innerHTML = vs.multiResponseItems.map((item, i) => `
+      <div class="mapping-toolbar" style="margin-bottom:6px" data-mr-row="${i}">
+        <label class="field" style="flex:1"><span>Columna</span>${columnSelectHtml(item.column, i)}</label>
+        <label class="field" style="flex:1"><span>Etiqueta</span><input type="text" data-mr-label="${i}" value="${escapeHtml(item.label)}"></label>
+        <button class="btn btn--icon btn--sm" data-mr-remove="${i}" title="Quitar" style="align-self:flex-end">&times;</button>
+      </div>
+    `).join("");
+
+    wrap.querySelectorAll("select[data-mr-column]").forEach((sel) => {
+      sel.addEventListener("change", (e) => {
+        const i = Number(e.target.dataset.mrColumn);
+        vs.multiResponseItems[i].column = e.target.value;
+      });
+    });
+    wrap.querySelectorAll("input[data-mr-label]").forEach((input) => {
+      input.addEventListener("change", (e) => {
+        const i = Number(e.target.dataset.mrLabel);
+        vs.multiResponseItems[i].label = e.target.value;
+      });
+    });
+    wrap.querySelectorAll("button[data-mr-remove]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const i = Number(e.target.dataset.mrRemove);
+        vs.multiResponseItems.splice(i, 1);
+        if (!vs.multiResponseItems.length) vs.multiResponseItems.push({ column: "", label: "" });
+        renderMultiResponseItems();
+      });
+    });
+  }
+
+  function columnSelectHtml(selected, index) {
+    return `<select data-mr-column="${index}">${columnOptionsHtml(selected)}</select>`;
+  }
+
+  el("addMultiResponseItemBtn").addEventListener("click", () => {
+    currentVignetteState().multiResponseItems.push({ column: "", label: "" });
+    renderMultiResponseItems();
+  });
+
+  el("runMultiResponseBtn").addEventListener("click", async () => {
+    const vs = currentVignetteState();
+    if (!vs.summary) { alert('Aplica primero el mapeo en el paso "Mapeo de variables".'); return; }
+    const items = vs.multiResponseItems.filter((it) => it.column);
+    if (!items.length) { alert("Añade al menos una columna."); return; }
+    try {
+      const result = await postJson(
+        `/api/vignette/${state.sessionId}/${state.activeExperimentId}/multi-response`,
+        { items: items.map((it) => ({ column: it.column, label: it.label || it.column })), group_attribute: vs.multiResponseGroupAttribute || null }
+      );
+      vs.multiResponseResult = result;
+      renderMultiResponseResult(result);
+    } catch (err) {
+      el("multiResponseResult").innerHTML = `<div class="issue-list__item">${escapeHtml(err.message)}</div>`;
+    }
+  });
+
+  function renderMultiResponseTable(title, rows, baseN) {
+    let html = `<h4 style="font-size:13px;margin-bottom:8px">${escapeHtml(title)} <span class="text-muted" style="font-weight:400">(base n=${baseN})</span></h4>`;
+    html += '<div class="table-scroll"><table><thead><tr><th>Opción</th><th>n</th><th>% de casos</th></tr></thead><tbody>';
+    for (const row of rows) {
+      html += `<tr><td>${escapeHtml(row.label)}</td><td>${row.n}</td><td>${row.pct_of_cases === null ? "—" : fmt(row.pct_of_cases, 1) + "%"}</td></tr>`;
+    }
+    html += "</tbody></table></div>";
+    return html;
+  }
+
+  function renderMultiResponseResult(result) {
+    let html = renderMultiResponseTable("Global", result.overall, result.base_n);
+    if (result.by_group) {
+      for (const [level, group] of Object.entries(result.by_group)) {
+        html += `<div style="margin-top:18px">${renderMultiResponseTable(`${result.group_label}: ${level}`, group.rows, group.base_n)}</div>`;
+      }
+    }
+    el("multiResponseResult").innerHTML = html;
+  }
+
+  // ---------- Recodificación de variables ----------
+
+  el("openRecodeBtn").addEventListener("click", () => {
+    openModal(`
+      <div class="modal-header"><h3>Recodificar variable</h3><button class="modal-close" aria-label="Cerrar">&times;</button></div>
+      <div class="modal-body">
+        <p class="text-secondary" style="font-size:12.5px;margin-bottom:12px">
+          Crea una nueva columna dicotómica a partir de una variable numérica (p. ej. "grave" = Sí si la
+          gravedad es ≥ 8, si no No). La nueva columna queda disponible en toda la sesión.
+        </p>
+        <label class="field"><span>Variable de origen</span><select id="recodeSourceColumn">${columnOptionsHtml("")}</select></label>
+        <div class="mapping-toolbar" style="margin-top:10px">
+          <label class="field"><span>Operador</span>
+            <select id="recodeOperator">
+              <option value=">=">&ge;</option>
+              <option value=">">&gt;</option>
+              <option value="<=">&le;</option>
+              <option value="<">&lt;</option>
+              <option value="==">=</option>
+            </select>
+          </label>
+          <label class="field"><span>Umbral</span><input id="recodeThreshold" type="number" step="any" value="1"></label>
+        </div>
+        <div class="mapping-toolbar" style="margin-top:10px">
+          <label class="field"><span>Etiqueta si se cumple</span><input id="recodeTrueLabel" type="text" value="Sí"></label>
+          <label class="field"><span>Etiqueta si no se cumple</span><input id="recodeFalseLabel" type="text" value="No"></label>
+        </div>
+        <label class="field" style="margin-top:10px"><span>Nombre de la nueva columna</span><input id="recodeNewColumn" type="text" placeholder="gravedad_bin"></label>
+        <label class="field" style="margin-top:10px"><span>Etiqueta descriptiva (opcional)</span><input id="recodeNewLabel" type="text"></label>
+        <div id="recodeError" class="modal-error" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn--ghost modal-close">Cancelar</button>
+        <button id="recodeSave" class="btn btn--primary">Crear</button>
+      </div>
+    `);
+    el("recodeSave").addEventListener("click", async () => {
+      const payload = {
+        source_column: el("recodeSourceColumn").value,
+        new_column: el("recodeNewColumn").value.trim(),
+        new_label: el("recodeNewLabel").value.trim(),
+        operator: el("recodeOperator").value,
+        threshold: Number(el("recodeThreshold").value),
+        true_label: el("recodeTrueLabel").value.trim() || "Sí",
+        false_label: el("recodeFalseLabel").value.trim() || "No",
+      };
+      if (!payload.source_column || !payload.new_column) {
+        el("recodeError").hidden = false;
+        el("recodeError").textContent = "Indica la variable de origen y el nombre de la nueva columna.";
+        return;
+      }
+      try {
+        const result = await postJson(`/api/columns/${state.sessionId}/recode`, payload);
+        state.columns = result.columns;
+        closeModal();
+        renderTablesColumnChecklist(el("tablesColumnSearch").value);
+      } catch (err) {
+        el("recodeError").hidden = false;
+        el("recodeError").textContent = err.message;
+      }
+    });
+  });
 
   // =====================================================================
   // Conjunto de tipo "elección con diseño externo" · Paso 1 · Mapeo
