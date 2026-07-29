@@ -186,3 +186,78 @@ def test_delete_experiment_removes_it_from_the_list(client):
     r = client.get(f"/api/experiments/{session_id}")
     ids = {e["id"] for e in r.json()["experiments"]}
     assert temp_id not in ids
+
+
+def _apply_default_conjoint_mapping(client, session_id, experiment_id):
+    r = client.get(f"/api/mapping/{session_id}/{experiment_id}/suggest")
+    suggestion = r.json()
+    payload = {
+        "respondent_id": suggestion["respondent_id"],
+        "tasks": suggestion["tasks"],
+        "profiles": suggestion["profiles"],
+        "attributes": suggestion["attributes"],
+        "choice_columns": suggestion["choice_columns"],
+        "choice_value_map": suggestion["choice_value_map"],
+    }
+    r = client.post(f"/api/mapping/{session_id}/{experiment_id}/apply", json=payload)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+@pytest.mark.parametrize("fmt,content_type_fragment", [
+    ("csv", "text/csv"),
+    ("xlsx", "spreadsheetml"),
+    ("sav", "octet-stream"),
+    ("dta", "octet-stream"),
+])
+def test_download_reshaped_conjoint_in_every_format(client, fmt, content_type_fragment):
+    data = _upload_mixed(client)
+    session_id = data["session_id"]
+    conjoint_id = data["default_experiment_id"]
+    _apply_default_conjoint_mapping(client, session_id, conjoint_id)
+
+    r = client.get(f"/api/reshape/{session_id}/{conjoint_id}/download?format={fmt}")
+    assert r.status_code == 200, r.text
+    assert content_type_fragment in r.headers["content-type"]
+    assert f'.{fmt}"' in r.headers["content-disposition"]
+    assert len(r.content) > 0
+
+
+def test_download_reshaped_rejects_unknown_format(client):
+    data = _upload_mixed(client)
+    session_id = data["session_id"]
+    conjoint_id = data["default_experiment_id"]
+    _apply_default_conjoint_mapping(client, session_id, conjoint_id)
+
+    r = client.get(f"/api/reshape/{session_id}/{conjoint_id}/download?format=pdf")
+    assert r.status_code == 400
+
+
+def test_apply_mapping_summary_includes_unmapped_choice_classification(client):
+    data = _upload_mixed(client)
+    session_id = data["session_id"]
+    conjoint_id = data["default_experiment_id"]
+    result = _apply_default_conjoint_mapping(client, session_id, conjoint_id)
+    assert "unmapped_choice_values" in result["summary"]
+    assert result["summary"]["unmapped_choice_values"] == {"missing_like": [], "unrecognized": []}
+
+
+def test_download_vignette_data(client):
+    data = _upload_mixed(client)
+    session_id = data["session_id"]
+    r = client.post(f"/api/experiments/{session_id}", json={"name": "Viñeta", "kind": "vignette"})
+    vignette_id = r.json()["id"]
+    client.patch(
+        f"/api/experiments/{session_id}/{vignette_id}",
+        json={"sample_filter": {"column": "EXPERIMENTO", "values": ["2"]}},
+    )
+    apply_payload = {
+        "outcome_column": "gravedad",
+        "attributes": [{"name": "texto", "label": "Texto mostrado", "column": "texto_version"}],
+    }
+    r = client.post(f"/api/vignette/{session_id}/{vignette_id}/apply", json=apply_payload)
+    assert r.status_code == 200, r.text
+
+    r = client.get(f"/api/vignette/{session_id}/{vignette_id}/download?format=xlsx")
+    assert r.status_code == 200, r.text
+    assert "spreadsheetml" in r.headers["content-type"]

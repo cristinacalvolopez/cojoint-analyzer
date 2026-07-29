@@ -445,6 +445,7 @@ tfoot td { font-weight: 600; border-top: 1px solid var(--baseline); border-botto
 
 .issue-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .issue-list__item { font-size: 12.5px; padding: 8px 12px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--series-2) 12%, transparent); color: var(--series-2); }
+.issue-list__item--info { background: color-mix(in srgb, var(--series-1) 10%, transparent); color: var(--text-secondary); }
 
 /* ---------- Dot plot (AMCE) ---------- */
 .dotplot-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }

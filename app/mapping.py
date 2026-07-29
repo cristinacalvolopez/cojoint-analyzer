@@ -240,20 +240,48 @@ def suggest_mapping(columns: list[str], df: pd.DataFrame | None = None) -> dict:
     }
 
 
-def validate_config(df: pd.DataFrame, config: ConjointMappingConfig) -> list[str]:
-    """Devuelve una lista de problemas (cadenas legibles). Lista vacía = ok.
+def classify_unmapped_choice_values(df: pd.DataFrame, config: ConjointMappingConfig) -> dict[str, list[str]]:
+    """Separa, entre todos los valores observados en las columnas de elección
+    que no están en `choice_value_map`, los que parecen no-respuesta (NS/NC…)
+    de los que no se reconocen como tales. Se usa para que el resumen de la
+    reestructuración explique *por qué* hay conjuntos de elección sin perfil
+    elegido, en vez de mostrar solo un recuento que parece siempre un error.
+    """
+    observed: set[str] = set()
+    for task in config.tasks:
+        choice_col = config.choice_columns.get(task)
+        if choice_col and choice_col in df.columns:
+            observed |= set(df[choice_col].dropna().astype(str).unique())
+    unmapped = observed - set(config.choice_value_map.keys())
+    return {
+        "missing_like": sorted(v for v in unmapped if _looks_like_missing_value(v)),
+        "unrecognized": sorted(v for v in unmapped if not _looks_like_missing_value(v)),
+    }
+
+
+def validate_config(df: pd.DataFrame, config: ConjointMappingConfig) -> list[dict]:
+    """Devuelve una lista de problemas: `{"text": ..., "severity": "warning"|"info"}`.
+    Lista vacía = ok.
 
     No lanza excepción: la interfaz muestra los avisos y deja decidir al
     usuario si son bloqueantes (p. ej. un atributo sin columna en una tarea
-    concreta puede ser intencional si esa tarea no usa ese atributo).
+    concreta puede ser intencional si esa tarea no usa ese atributo). La
+    severidad "info" es para lo que es normal en cualquier encuesta (no
+    respuesta) y no necesita corregirse, a diferencia de "warning".
     """
-    issues: list[str] = []
+    issues: list[dict] = []
+
+    def warn(text: str) -> None:
+        issues.append({"text": text, "severity": "warning"})
+
+    def info(text: str) -> None:
+        issues.append({"text": text, "severity": "info"})
 
     if config.respondent_id is not None and config.respondent_id not in df.columns:
-        issues.append(f'La columna de identificador "{config.respondent_id}" no existe en el fichero.')
+        warn(f'La columna de identificador "{config.respondent_id}" no existe en el fichero.')
 
     if config.respondent_id is not None and df[config.respondent_id].duplicated().any():
-        issues.append(
+        warn(
             f'La columna de identificador "{config.respondent_id}" tiene valores repetidos: '
             "revisa que sea un identificador único por entrevistado."
         )
@@ -261,24 +289,32 @@ def validate_config(df: pd.DataFrame, config: ConjointMappingConfig) -> list[str
     for task in config.tasks:
         choice_col = config.choice_columns.get(task)
         if not choice_col:
-            issues.append(f'La tarea "{task}" no tiene columna de elección asignada.')
+            warn(f'La tarea "{task}" no tiene columna de elección asignada.')
         elif choice_col not in df.columns:
-            issues.append(f'La columna de elección "{choice_col}" de la tarea "{task}" no existe en el fichero.')
+            warn(f'La columna de elección "{choice_col}" de la tarea "{task}" no existe en el fichero.')
         else:
             observed = set(df[choice_col].dropna().astype(str).unique())
             unmapped = observed - set(config.choice_value_map.keys())
-            if unmapped:
-                issues.append(
-                    f'La columna de elección de la tarea "{task}" tiene valores sin traducir a perfil: '
-                    f"{', '.join(sorted(unmapped))}."
+            missing_like = sorted(v for v in unmapped if _looks_like_missing_value(v))
+            unrecognized = sorted(v for v in unmapped if not _looks_like_missing_value(v))
+            if missing_like:
+                info(
+                    f'La tarea "{task}" tiene códigos de no respuesta en la columna de elección '
+                    f"({', '.join(missing_like)}): esas filas se tratarán como sin elección, es normal "
+                    "si la encuesta permite no contestar."
+                )
+            if unrecognized:
+                warn(
+                    f'La columna de elección de la tarea "{task}" tiene valores sin traducir a ningún perfil: '
+                    f"{', '.join(unrecognized)}. Si no son de no respuesta, revisa si falta añadirlos al mapeo."
                 )
 
         for profile in config.profiles:
             for attr in config.attributes:
                 col = attr.columns.get(task, {}).get(profile)
                 if not col:
-                    issues.append(f'Falta columna para el atributo "{attr.name}", tarea "{task}", perfil "{profile}".')
+                    warn(f'Falta columna para el atributo "{attr.name}", tarea "{task}", perfil "{profile}".')
                 elif col not in df.columns:
-                    issues.append(f'La columna "{col}" (atributo "{attr.name}", tarea "{task}", perfil "{profile}") no existe.')
+                    warn(f'La columna "{col}" (atributo "{attr.name}", tarea "{task}", perfil "{profile}") no existe.')
 
     return issues

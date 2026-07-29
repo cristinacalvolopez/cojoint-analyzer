@@ -41,4 +41,5 @@ def test_validate_config_no_issues_on_well_formed_mapping(wide_df, mapping_confi
 def test_validate_config_flags_missing_column(wide_df, mapping_config):
     mapping_config.choice_columns["cj1"] = "columna_inexistente"
     issues = validate_config(wide_df, mapping_config)
-    assert any("columna_inexistente" in issue for issue in issues)
+    assert any("columna_inexistente" in issue["text"] for issue in issues)
+    assert all(issue["severity"] == "warning" for issue in issues)

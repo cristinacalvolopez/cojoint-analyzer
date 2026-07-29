@@ -924,7 +924,7 @@
     issuesEl.innerHTML = "";
     try {
       const result = await postJson(`/api/mapping/${state.sessionId}/${id}/apply`, payload);
-      issuesEl.innerHTML = result.issues.map((i) => `<div class="issue-list__item">${escapeHtml(i)}</div>`).join("");
+      issuesEl.innerHTML = result.issues.map((i) => `<div class="issue-list__item${i.severity === "info" ? " issue-list__item--info" : ""}">${escapeHtml(i.text)}</div>`).join("");
       cs.reshapeSummary = result.summary;
       cs.reshapePreview = null;
       cs.amceResult = null;
@@ -999,15 +999,38 @@
       <div class="stat-tile"><span class="stat-tile__label">${escapeHtml(label)}</span><span class="stat-tile__value">${fmt(value, 0)}</span></div>
     `).join("");
 
+    // Un conjunto de elección sin perfil elegido puede ser un problema de mapeo
+    // (un valor real que no se tradujo a ningún perfil) o, simplemente, que el
+    // entrevistado no contestó esa tarea (NS/NC y similares) — algo normal en
+    // cualquier encuesta. Se distinguen para no alarmar quandto es lo segundo.
+    const unmapped = s.unmapped_choice_values || { missing_like: [], unrecognized: [] };
+    const onlyNonResponse = unmapped.missing_like.length > 0 && unmapped.unrecognized.length === 0;
+
     const warnings = [];
-    if (s.choice_sets_without_selection > 0) warnings.push(`${s.choice_sets_without_selection} conjunto(s) de elección sin perfil elegido (revisa la columna de elección o el mapeo de valores).`);
-    if (s.choice_sets_with_multiple_selections > 0) warnings.push(`${s.choice_sets_with_multiple_selections} conjunto(s) de elección con más de un perfil marcado como elegido.`);
-    if (s.missing_choice_rows > 0) warnings.push(`${s.missing_choice_rows} filas sin valor de elección.`);
+    if (s.choice_sets_without_selection > 0) {
+      if (onlyNonResponse) {
+        warnings.push({
+          info: true,
+          text: `${s.choice_sets_without_selection} conjunto(s) de elección sin perfil elegido (${s.missing_choice_rows} filas) — corresponden a códigos de no respuesta en la columna de elección: ${unmapped.missing_like.join(", ")}. Es normal si la encuesta permite no contestar, no hace falta corregir nada.`,
+        });
+      } else {
+        const detail = unmapped.unrecognized.length
+          ? ` Valores sin traducir a ningún perfil: ${unmapped.unrecognized.join(", ")}.`
+          : "";
+        warnings.push({
+          info: false,
+          text: `${s.choice_sets_without_selection} conjunto(s) de elección sin perfil elegido (${s.missing_choice_rows} filas).${detail} Revisa la columna de elección o el mapeo de valores.`,
+        });
+      }
+    }
+    if (s.choice_sets_with_multiple_selections > 0) {
+      warnings.push({ info: false, text: `${s.choice_sets_with_multiple_selections} conjunto(s) de elección con más de un perfil marcado como elegido.` });
+    }
     for (const [attr, cov] of Object.entries(s.attribute_coverage)) {
-      if (cov.n_missing > 0) warnings.push(`El atributo "${attr}" tiene ${cov.n_missing} valores perdidos.`);
+      if (cov.n_missing > 0) warnings.push({ info: false, text: `El atributo "${attr}" tiene ${cov.n_missing} valores perdidos.` });
     }
     el("reshapeWarnings").hidden = warnings.length === 0;
-    el("reshapeWarningsList").innerHTML = warnings.map((w) => `<div class="issue-list__item">${escapeHtml(w)}</div>`).join("");
+    el("reshapeWarningsList").innerHTML = warnings.map((w) => `<div class="issue-list__item${w.info ? " issue-list__item--info" : ""}">${escapeHtml(w.text)}</div>`).join("");
 
     renderPreviewTable(cs.reshapePreview);
   }
@@ -1020,6 +1043,20 @@
     thead.innerHTML = `<tr>${cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`;
     tbody.innerHTML = preview.rows.map((row) => `<tr>${cols.map((c) => `<td>${row[c] === null || row[c] === undefined ? "" : escapeHtml(row[c])}</td>`).join("")}</tr>`).join("");
   }
+
+  // Descarga del fichero completo ya reestructurado/mapeado (no solo la
+  // vista previa limitada): un simple cambio de `location.href` basta, ya
+  // que la respuesta lleva `Content-Disposition: attachment` y el navegador
+  // la trata como descarga sin salir de la SPA.
+  el("downloadButtons").querySelectorAll("button[data-download-format]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const exp = activeExperiment();
+      const base = exp.kind === "conjoint"
+        ? `/api/reshape/${state.sessionId}/${exp.id}/download`
+        : `/api/vignette/${state.sessionId}/${exp.id}/download`;
+      window.location.href = `${base}?format=${btn.dataset.downloadFormat}`;
+    });
+  });
 
   // =====================================================================
   // Conjunto de tipo "viñeta" · Paso 1 · Mapeo

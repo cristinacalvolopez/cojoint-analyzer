@@ -1,6 +1,7 @@
 import pandas as pd
 
-from app.mapping import infer_choice_value_map, suggest_mapping
+from app.mapping import classify_unmapped_choice_values, infer_choice_value_map, suggest_mapping, validate_config
+from app.schema import AttributeMapping, ConjointMappingConfig
 
 
 def test_choice_column_prefers_eleccion_over_elige_when_both_present():
@@ -95,3 +96,74 @@ def test_suggest_mapping_with_df_infers_real_choice_values():
     suggestion = suggest_mapping(columns, df)
     assert suggestion["choice_value_map"] == {"Perfil A": "A", "Perfil B": "B"}
     assert suggestion["unmatched_choice_values"] == []
+
+
+def _config_with_choice(choice_value_map):
+    return ConjointMappingConfig(
+        tasks=["cj1"],
+        profiles=["A", "B"],
+        attributes=[AttributeMapping(name="rol", columns={"cj1": {"A": "cj1_A_rol", "B": "cj1_B_rol"}})],
+        choice_columns={"cj1": "cj1_eleccion"},
+        choice_value_map=choice_value_map,
+    )
+
+
+def test_classify_unmapped_choice_values_separates_non_response_from_real_problem():
+    """Regresión: el resumen de la reestructuración mostraba "313 conjuntos
+    sin perfil elegido" sin decir por qué, dando a entender un fallo de mapeo
+    incluso cuando la única causa era "NS/NC" (no respuesta genuina). Esta
+    clasificación es lo que permite a la interfaz distinguir ambos casos.
+    """
+    df = pd.DataFrame({
+        "cj1_eleccion": ["Perfil A", "Perfil B", "NS/NC", "algo_raro"],
+        "cj1_A_rol": ["policia"] * 4,
+        "cj1_B_rol": ["medico"] * 4,
+    })
+    config = _config_with_choice({"Perfil A": "A", "Perfil B": "B"})
+    result = classify_unmapped_choice_values(df, config)
+    assert result["missing_like"] == ["NS/NC"]
+    assert result["unrecognized"] == ["algo_raro"]
+
+
+def test_classify_unmapped_choice_values_empty_when_everything_mapped():
+    df = pd.DataFrame({
+        "cj1_eleccion": ["Perfil A", "Perfil B"],
+        "cj1_A_rol": ["policia", "medico"],
+        "cj1_B_rol": ["medico", "policia"],
+    })
+    config = _config_with_choice({"Perfil A": "A", "Perfil B": "B"})
+    result = classify_unmapped_choice_values(df, config)
+    assert result == {"missing_like": [], "unrecognized": []}
+
+
+def test_validate_config_marks_non_response_as_info_not_warning():
+    """Regresión: un valor de no respuesta (NS/NC) en la columna de elección
+    no es un problema de mapeo — antes se mostraba con el mismo estilo de
+    aviso alarmante que un error real. Debe llegar marcado como "info".
+    """
+    df = pd.DataFrame({
+        "cj1_eleccion": ["Perfil A", "Perfil B", "NS/NC"],
+        "cj1_A_rol": ["policia"] * 3,
+        "cj1_B_rol": ["medico"] * 3,
+    })
+    config = _config_with_choice({"Perfil A": "A", "Perfil B": "B"})
+    issues = validate_config(df, config)
+    non_response_issues = [i for i in issues if "no respuesta" in i["text"]]
+    assert len(non_response_issues) == 1
+    assert non_response_issues[0]["severity"] == "info"
+
+
+def test_validate_config_marks_untranslated_value_as_warning():
+    """Un valor que no es de no respuesta y tampoco está traducido a ningún
+    perfil sí es un problema real de mapeo: debe seguir marcado "warning".
+    """
+    df = pd.DataFrame({
+        "cj1_eleccion": ["Perfil A", "Perfil B", "algo_raro"],
+        "cj1_A_rol": ["policia"] * 3,
+        "cj1_B_rol": ["medico"] * 3,
+    })
+    config = _config_with_choice({"Perfil A": "A", "Perfil B": "B"})
+    issues = validate_config(df, config)
+    untranslated_issues = [i for i in issues if "sin traducir" in i["text"]]
+    assert len(untranslated_issues) == 1
+    assert untranslated_issues[0]["severity"] == "warning"

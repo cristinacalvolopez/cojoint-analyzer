@@ -205,7 +205,18 @@
             </div>
           </div>
           <div class="card">
-            <h3 id="previewTitle">Vista previa del fichero largo (formato tidy)</h3>
+            <div class="dotplot-toolbar">
+              <h3 id="previewTitle" style="margin:0">Vista previa del fichero largo (formato tidy)</h3>
+              <div id="downloadButtons" style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn btn--sm" data-download-format="xlsx">Descargar .xlsx</button>
+                <button class="btn btn--sm" data-download-format="sav">Descargar .sav</button>
+                <button class="btn btn--sm" data-download-format="dta">Descargar .dta</button>
+                <button class="btn btn--sm" data-download-format="csv">Descargar .csv</button>
+              </div>
+            </div>
+            <p class="text-secondary" style="font-size:12px;margin-bottom:12px">
+              Descarga el fichero completo (no solo la vista previa de abajo) ya reestructurado.
+            </p>
             <div class="table-scroll">
               <table id="reshapePreviewTable"><thead></thead><tbody></tbody></table>
             </div>

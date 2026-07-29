@@ -2,10 +2,11 @@ import sys
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import amce as amcemod
+from . import export as exportmod
 from . import mapping as mappingmod
 from . import reshape as reshapemod
 from . import store
@@ -195,6 +196,7 @@ async def apply_mapping(session_id: str, experiment_id: str, payload: ConjointMa
 
     store.set_experiment_mapping(session_id, experiment_id, payload, long_df)
     summary = reshapemod.reshape_summary(long_df, payload)
+    summary["unmapped_choice_values"] = mappingmod.classify_unmapped_choice_values(df, payload)
     return {"issues": issues, "summary": summary}
 
 
@@ -204,6 +206,24 @@ async def reshape_preview(session_id: str, experiment_id: str, limit: int = 50):
     preview = long_df.head(limit).copy()
     preview = preview.astype(object).where(preview.notna(), None)
     return {"rows": preview.to_dict(orient="records"), "n_total": int(len(long_df))}
+
+
+def _download_response(df, fmt: str, filename_stem: str) -> Response:
+    try:
+        content, content_type = exportmod.export_dataframe(df, fmt)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename_stem}.{fmt}"'},
+    )
+
+
+@app.get("/api/reshape/{session_id}/{experiment_id}/download")
+async def download_reshaped(session_id: str, experiment_id: str, format: str = "csv"):
+    long_df = _get_long_df_or_400(session_id, experiment_id)
+    return _download_response(long_df, format, "conjoint_reestructurado")
 
 
 # ---------- Estimación del AMCE (conjuntos de tipo "elección") ----------
@@ -272,6 +292,16 @@ async def vignette_preview(session_id: str, experiment_id: str, limit: int = 50)
     preview = df[cols].head(limit).copy()
     preview = preview.astype(object).where(preview.notna(), None)
     return {"rows": preview.to_dict(orient="records"), "n_total": int(len(df))}
+
+
+@app.get("/api/vignette/{session_id}/{experiment_id}/download")
+async def download_vignette(session_id: str, experiment_id: str, format: str = "csv"):
+    _require_kind(session_id, experiment_id, "vignette")
+    df = _get_long_df_or_400(session_id, experiment_id)
+    mapping_config = store.get_experiment_mapping(session_id, experiment_id)
+    cols = [mapping_config.outcome_column, *[a.column for a in mapping_config.attributes]]
+    cols = [c for c in cols if c in df.columns]
+    return _download_response(df[cols], format, "vineta_datos")
 
 
 @app.post("/api/vignette/{session_id}/{experiment_id}/estimate")

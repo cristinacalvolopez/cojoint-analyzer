@@ -81,7 +81,12 @@ asistente de pasos al tipo del conjunto activo.
    `choice_set` (necesario para el clogit) y `chosen` (0/1). Se valida que
    cada conjunto de elección tenga exactamente un perfil marcado como
    elegido y se informa de incidencias (valores perdidos, elecciones
-   ambiguas).
+   ambiguas) — distinguiendo (`classify_unmapped_choice_values`) entre
+   códigos de no respuesta reconocidos (NS/NC…, aviso informativo: es normal
+   en cualquier encuesta) y valores realmente sin traducir a ningún perfil
+   (aviso de verdad, probable error de mapeo). El fichero largo completo se
+   puede descargar en `.xlsx`, `.sav`, `.dta` o `.csv` (`app/export.py`), no
+   solo consultar en la vista previa limitada a 50 filas.
 3. **Estimación del AMCE** (`app/amce.py`): sobre el fichero largo,
    - `ols`: `chosen ~ dummies de cada atributo` por mínimos cuadrados con
      errores estándar *cluster-robust* agrupados por entrevistado
@@ -157,11 +162,12 @@ cojoint-analyzer/
 │   ├── reshape.py       # motor de transformación wide -> long (conjoint)
 │   ├── amce.py           # estimación AMCE (OLS clustered / clogit) + utilidades compartidas
 │   ├── vignette.py       # detección, validación y estimación OLS para conjuntos de viñeta
+│   ├── export.py          # descarga del fichero reestructurado/mapeado en xlsx/sav/dta/csv
 │   └── store.py          # sesiones en memoria: dataset + colección de conjuntos
 ├── static/
 │   ├── index.html
 │   ├── styles.css        # mismos design tokens que pretest-analyzer
-│   └── app.js             # SPA sin build step (conjuntos, mapeo, dot plot SVG, export)
+│   └── app.js             # SPA sin build step (conjuntos, mapeo, ayuda, dot plot SVG, export)
 ├── tests/
 │   ├── conftest.py        # generador de datos wide sintéticos con efecto conocido
 │   ├── test_reshape.py
@@ -169,7 +175,8 @@ cojoint-analyzer/
 │   ├── test_mapping.py
 │   ├── test_readers.py    # fix de acentos corruptos (mojibake)
 │   ├── test_vignette.py
-│   └── test_api.py        # integración: varios conjuntos por sesión, filtro, viñeta
+│   ├── test_export.py
+│   └── test_api.py        # integración: varios conjuntos por sesión, filtro, viñeta, descargas
 ├── sample_data/
 │   └── generate_sample.py # genera un CSV ancho de ejemplo (300 x 8 tareas x 2 perfiles)
 ├── requirements.txt
