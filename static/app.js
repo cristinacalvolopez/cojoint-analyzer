@@ -66,7 +66,8 @@
   // ---------- Modal ----------
   const modalOverlay = el("modalOverlay");
   const modalBody = el("modalBody");
-  function openModal(html) {
+  function openModal(html, opts) {
+    modalBody.className = "modal" + (opts && opts.wide ? " modal--help" : "");
     modalBody.innerHTML = html;
     modalOverlay.hidden = false;
     modalBody.querySelectorAll(".modal-close").forEach((b) => b.addEventListener("click", closeModal));
@@ -77,6 +78,118 @@
   }
   modalOverlay.addEventListener("click", (e) => { if (e.target === modalOverlay) closeModal(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !modalOverlay.hidden) closeModal(); });
+
+  // ---------- Ayuda (guía paso a paso) ----------
+  const HELP_SECTIONS = [
+    {
+      id: "help-upload",
+      title: "1 · Sube el archivo",
+      body: `
+        <p>Arrastra o selecciona tu base en <code>.xlsx</code>, <code>.csv</code>, <code>.dta</code> (Stata) o
+        <code>.sav</code> (SPSS). Al subirlo se crea automáticamente un primer conjunto ("Conjunto 1", tipo
+        Elección) con una sugerencia de mapeo ya aplicada — no hace falta empezar desde cero.</p>
+        <p>Todo se procesa en memoria durante esta sesión: no se guarda en disco ni se envía a ningún sitio.</p>`,
+    },
+    {
+      id: "help-conjuntos",
+      title: "2 · Conjuntos (varios experimentos en un mismo archivo)",
+      body: `
+        <p>Un <strong>conjunto</strong> es un experimento dentro de tu sesión. Si tu archivo contiene más de uno
+        (p. ej. un conjoint de elección y una o varias viñetas, o el mismo diseño repetido para submuestras
+        distintas), usa el botón <strong>+</strong> del panel "Conjuntos" para añadir cada uno por separado, en
+        vez de tener que subir varios archivos o perder el trabajo ya hecho.</p>
+        <ul>
+          <li><strong>Elección</strong>: perfiles enfrentados (A vs B…) de los que el entrevistado elige uno → AMCE.</li>
+          <li><strong>Viñeta</strong>: un único perfil o estímulo, valorado en una escala → estimación por OLS.</li>
+        </ul>
+        <p>Cada conjunto de la barra lateral se puede renombrar (✎), duplicar como plantilla (⧉, copia el mapeo
+        ya hecho para no repetirlo) o eliminar (×). Cambiar de conjunto no borra el trabajo de los demás.</p>`,
+    },
+    {
+      id: "help-filtro",
+      title: "3 · Submuestra de este conjunto",
+      body: `
+        <p>Úsalo cuando el archivo reparte varios experimentos entre distintas submuestras de la misma encuesta
+        (p. ej. una columna <code>EXPERIMENTO</code> con valores 1/2/3). Elige esa columna y marca qué valores
+        pertenecen a <em>este</em> conjunto en concreto: el resto de pasos (mapeo, reestructuración, estimación)
+        solo verán esas filas.</p>
+        <p>Si dejas la columna vacía, el conjunto usa el archivo completo. Cambiar el filtro después de haber
+        aplicado un mapeo lo reinicia, porque las columnas detectadas pueden variar según la submuestra.</p>`,
+    },
+    {
+      id: "help-estructura",
+      title: "4 · Estructura del experimento",
+      body: `
+        <p>Para conjuntos de tipo Elección:</p>
+        <ul>
+          <li><strong>Columna identificadora del entrevistado</strong>: el ID único de cada persona. Si no hay
+          ninguna, deja "(usar número de fila)".</li>
+          <li><strong>Tareas detectadas</strong>: cada tarea es una pantalla de elección (p. ej. <code>cj1</code>,
+          <code>cj2</code>…). Aparecen como chips; quítalas con la × o añade las que falten desde el desplegable
+          "+ añadir tarea…" — nunca hace falta escribirlas a mano, se eligen de lo que el propio archivo contiene.</li>
+          <li><strong>Perfiles por tarea</strong>: las opciones que se enfrentan en cada tarea (normalmente A/B).
+          Un conjoint necesita al menos dos.</li>
+        </ul>`,
+    },
+    {
+      id: "help-atributos",
+      title: "5 · Atributos por tarea y perfil",
+      body: `
+        <p>La rejilla cruza cada tarea con cada atributo × perfil: cada celda es la columna del archivo que
+        contiene ese valor concreto (p. ej. "rol" del perfil A en la tarea <code>cj1</code>). Una celda en verde
+        significa que hay una columna asignada; en naranja, que falta.</p>
+        <p>Usa "+ Añadir atributo" para incorporar un rasgo que no se haya detectado, o la × de la cabecera para
+        quitar uno que no necesites en el análisis.</p>
+        <p>Justo debajo, la <strong>columna de elección por tarea</strong> indica qué columna registra la
+        respuesta, y a qué perfil corresponde cada valor real observado (p. ej. "Perfil A" → A). Esto se detecta
+        automáticamente contra los valores del archivo; corrígelo solo si ves algo raro en los avisos del paso
+        siguiente.</p>`,
+    },
+    {
+      id: "help-reestructuracion",
+      title: "6 · Reestructuración",
+      body: `
+        <p>Al pulsar "Aplicar mapeo", el archivo (una fila por entrevistado) se convierte en formato largo: una
+        fila por cada perfil visto en cada tarea. Verás un resumen con entrevistados, tareas, perfiles, conjuntos
+        de elección y filas resultantes, más una vista previa de esas filas.</p>
+        <p>Los avisos de calidad señalan problemas reales antes de estimar nada: conjuntos de elección sin ningún
+        perfil marcado como elegido, más de un perfil elegido a la vez, o atributos con valores perdidos. Si
+        salen muchos, suele apuntar a un problema en el mapeo del paso anterior (revisa la columna de elección).</p>`,
+    },
+    {
+      id: "help-amce",
+      title: "7 · Estimación (AMCE / viñeta)",
+      body: `
+        <p>Elige el <strong>método</strong> (solo para Elección): OLS con errores agrupados por entrevistado, o
+        logit condicional dentro de cada conjunto de elección. Marca qué atributos incluir y, si quieres, cambia
+        el nivel de referencia de cada uno.</p>
+        <p>El <strong>dot plot</strong> muestra un punto por nivel de atributo (la estimación) y una línea
+        horizontal (su intervalo de confianza al 95%); en azul intenso los efectos significativos, más tenues los
+        que no lo son, y en gris el nivel de referencia (siempre en 0). La tabla de abajo trae los mismos datos en
+        números, con error estándar y p-valor. Puedes exportar el gráfico en SVG/PNG y los coeficientes en CSV.</p>
+        <p>En conjuntos de tipo Viñeta el resultado se lee igual, pero el efecto es sobre la variable de resultado
+        continua, no sobre la probabilidad de ser elegido.</p>`,
+    },
+  ];
+
+  function renderHelpContent() {
+    const toc = HELP_SECTIONS.map((s) => `<a href="#${s.id}">${escapeHtml(s.title)}</a>`).join("");
+    const sections = HELP_SECTIONS.map((s) => `
+      <div class="help-section" id="${s.id}">
+        <h4>${escapeHtml(s.title)}</h4>
+        ${s.body}
+      </div>
+    `).join("");
+    return `
+      <div class="modal-header"><h3>Guía paso a paso</h3><button class="modal-close" aria-label="Cerrar">&times;</button></div>
+      <div class="help-toc">${toc}</div>
+      ${sections}
+    `;
+  }
+
+  el("helpBtn").addEventListener("click", () => {
+    openModal(renderHelpContent(), { wide: true });
+  });
 
   // ---------- Upload ----------
   const dropzone = el("dropzone");
