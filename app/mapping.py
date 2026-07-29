@@ -89,7 +89,7 @@ def candidate_profiles(columns: list[str]) -> list[str]:
     return sorted(found)
 
 
-def _looks_like_missing_value(value: str) -> bool:
+def looks_like_missing_value(value: str) -> bool:
     return value.strip().casefold() in _MISSING_VALUE_TOKENS
 
 
@@ -147,7 +147,7 @@ def infer_choice_value_map(
     if remaining_profiles:
         numbered = []
         for v in observed:
-            if v in value_map or _looks_like_missing_value(v):
+            if v in value_map or looks_like_missing_value(v):
                 continue
             m = re.search(r"(\d+)\s*$", v.strip())
             if m:
@@ -157,7 +157,7 @@ def infer_choice_value_map(
             for p, (_, v) in zip(remaining_profiles, numbered[: len(remaining_profiles)]):
                 value_map[v] = p
 
-    unmapped = sorted(v for v in observed if v not in value_map and not _looks_like_missing_value(v))
+    unmapped = sorted(v for v in observed if v not in value_map and not looks_like_missing_value(v))
     return value_map, unmapped
 
 
@@ -254,8 +254,8 @@ def classify_unmapped_choice_values(df: pd.DataFrame, config: ConjointMappingCon
             observed |= set(df[choice_col].dropna().astype(str).unique())
     unmapped = observed - set(config.choice_value_map.keys())
     return {
-        "missing_like": sorted(v for v in unmapped if _looks_like_missing_value(v)),
-        "unrecognized": sorted(v for v in unmapped if not _looks_like_missing_value(v)),
+        "missing_like": sorted(v for v in unmapped if looks_like_missing_value(v)),
+        "unrecognized": sorted(v for v in unmapped if not looks_like_missing_value(v)),
     }
 
 
@@ -295,8 +295,8 @@ def validate_config(df: pd.DataFrame, config: ConjointMappingConfig) -> list[dic
         else:
             observed = set(df[choice_col].dropna().astype(str).unique())
             unmapped = observed - set(config.choice_value_map.keys())
-            missing_like = sorted(v for v in unmapped if _looks_like_missing_value(v))
-            unrecognized = sorted(v for v in unmapped if not _looks_like_missing_value(v))
+            missing_like = sorted(v for v in unmapped if looks_like_missing_value(v))
+            unrecognized = sorted(v for v in unmapped if not looks_like_missing_value(v))
             if missing_like:
                 info(
                     f'La tarea "{task}" tiene códigos de no respuesta en la columna de elección '

@@ -258,6 +258,7 @@ button, input, select { font: inherit; color: inherit; }
 }
 .experiment-item__kind.is-conjoint { background: color-mix(in srgb, var(--series-1) 16%, transparent); color: var(--series-1); }
 .experiment-item__kind.is-vignette { background: color-mix(in srgb, var(--series-3) 16%, transparent); color: var(--series-3); }
+.experiment-item__kind.is-conjoint_design { background: color-mix(in srgb, var(--series-4) 18%, transparent); color: var(--series-4); }
 .experiment-item__actions { display: none; gap: 2px; flex-shrink: 0; }
 .experiment-item:hover .experiment-item__actions, .experiment-item.is-active .experiment-item__actions { display: flex; }
 .experiment-item__actions button {

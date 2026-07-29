@@ -188,6 +188,60 @@
           <button id="applyVignetteMappingBtn" class="btn btn--primary">Aplicar mapeo</button>
           <div id="vignetteMappingIssues" class="issue-list" style="margin-top:14px"></div>
         </div>
+
+        <!-- Variante "elección con diseño externo" -->
+        <div id="designMappingPanel" hidden>
+          <div class="card">
+            <h3>Fichero de diseño</h3>
+            <p class="text-secondary" style="font-size:12.5px;margin-bottom:14px">
+              Algunos experimentos de elección no incrustan los atributos de cada perfil en el fichero de
+              respuestas: solo guardan qué perfil ganó cada tarea y un código de versión aleatoria. Sube aquí
+              el fichero de diseño/plan de bloques (el que generó la aleatorización) para cruzarlo.
+            </p>
+            <label id="designDropzone" class="dropzone" for="designFileInput">
+              <span class="dropzone__icon">&#8593;</span>
+              <span class="dropzone__title">Arrastra el fichero de diseño aquí</span>
+              <span class="dropzone__hint">o haz clic para seleccionarlo &middot; .xlsx, .csv, .dta, .sav</span>
+              <input id="designFileInput" type="file" accept=".xlsx,.xls,.csv,.dta,.sav" hidden>
+            </label>
+            <div id="designFileInfo" style="margin-top:12px" hidden>
+              <p style="font-size:13.5px"><strong id="designFileName"></strong> · <span id="designFileRows"></span> filas</p>
+            </div>
+            <div id="designUploadStatus" class="upload-status" hidden></div>
+          </div>
+
+          <div id="designTaskProfileCard" class="card" hidden>
+            <h3>Tarea y perfil en el diseño</h3>
+            <div class="mapping-toolbar">
+              <label class="field"><span>Columna de tarea/pantalla</span><select id="designTaskColumnSelect"></select></label>
+              <label class="field"><span>Columna de perfil/posición</span><select id="designProfileColumnSelect"></select></label>
+              <button id="designDetectBtn" class="btn btn--sm">Detectar mapeo</button>
+            </div>
+          </div>
+
+          <div id="designStructureCard" class="card" hidden>
+            <h3>Estructura del experimento</h3>
+            <label class="field" style="margin-bottom:14px">
+              <span>Columna identificadora del entrevistado</span>
+              <select id="designRespondentIdSelect"></select>
+            </label>
+            <h4 style="font-size:13px;margin-bottom:8px">Columna de elección por tarea</h4>
+            <div id="designChoiceGridWrap" class="mapping-grid-wrap"></div>
+          </div>
+
+          <div id="designColumnsCard" class="card" hidden>
+            <h3>Atributos y claves de cruce</h3>
+            <p class="text-secondary" style="font-size:12.5px;margin-bottom:12px">
+              Cada columna del diseño que no sea la tarea ni el perfil es, o bien un atributo que entrará en
+              la estimación, o bien una clave de cruce (una variable de contexto, como la versión asignada a
+              cada entrevistado, que hay que traducir a los valores del fichero de respuestas).
+            </p>
+            <div id="designColumnsList"></div>
+          </div>
+
+          <button id="applyDesignMappingBtn" class="btn btn--primary">Aplicar mapeo</button>
+          <div id="designMappingIssues" class="issue-list" style="margin-top:14px"></div>
+        </div>
       </div>
 
       <!-- Paso 2: reestructuración / vista previa -->

@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import amce as amcemod
+from . import design_join as designmod
 from . import export as exportmod
 from . import mapping as mappingmod
 from . import reshape as reshapemod
@@ -18,6 +19,7 @@ from .schema import (
     ExperimentCreate,
     ExperimentDuplicate,
     ExperimentUpdate,
+    ExternalDesignMappingConfig,
     SampleFilter,
     VignetteEstimateRequest,
     VignetteMappingConfig,
@@ -49,14 +51,15 @@ def _get_experiment_or_404(session_id: str, experiment_id: str) -> dict:
         raise HTTPException(404, str(e))
 
 
-def _require_kind(session_id: str, experiment_id: str, kind: str) -> None:
+_KIND_LABELS = {"conjoint": "elección", "vignette": "viñeta", "conjoint_design": "elección con diseño externo"}
+
+
+def _require_kind(session_id: str, experiment_id: str, kind: str | tuple[str, ...]) -> None:
+    allowed = (kind,) if isinstance(kind, str) else kind
     actual = store.get_experiment_kind(session_id, experiment_id)
-    if actual != kind:
-        labels = {"conjoint": "elección", "vignette": "viñeta"}
-        raise HTTPException(
-            400,
-            f'Este conjunto es de tipo "{labels.get(actual, actual)}", no "{labels.get(kind, kind)}".',
-        )
+    if actual not in allowed:
+        wanted = " o ".join(f'"{_KIND_LABELS.get(k, k)}"' for k in allowed)
+        raise HTTPException(400, f'Este conjunto es de tipo "{_KIND_LABELS.get(actual, actual)}", no {wanted}.')
 
 
 def _get_long_df_or_400(session_id: str, experiment_id: str):
@@ -231,7 +234,7 @@ async def download_reshaped(session_id: str, experiment_id: str, format: str = "
 
 @app.post("/api/amce/{session_id}/{experiment_id}")
 async def estimate_amce(session_id: str, experiment_id: str, payload: AmceRequest):
-    _require_kind(session_id, experiment_id, "conjoint")
+    _require_kind(session_id, experiment_id, ("conjoint", "conjoint_design"))
     long_df = _get_long_df_or_400(session_id, experiment_id)
     mapping_config = store.get_experiment_mapping(session_id, experiment_id)
 
@@ -326,6 +329,152 @@ async def estimate_vignette(session_id: str, experiment_id: str, payload: Vignet
 
     result["plot_rows"] = amcemod.to_plot_rows(result)
     return result
+
+
+# ---------- Mapeo (conjuntos de tipo "elección con diseño externo") ----------
+
+
+def _get_design_df_or_400(session_id: str, experiment_id: str):
+    _get_experiment_or_404(session_id, experiment_id)
+    design_df = store.get_experiment_design_df(session_id, experiment_id)
+    if design_df is None:
+        raise HTTPException(400, "Todavía no se ha subido el fichero de diseño para este conjunto.")
+    return design_df
+
+
+@app.post("/api/design/{session_id}/{experiment_id}/upload")
+async def upload_design_file(session_id: str, experiment_id: str, file: UploadFile = File(...)):
+    _get_experiment_or_404(session_id, experiment_id)
+    _require_kind(session_id, experiment_id, "conjoint_design")
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "El archivo supera el límite de 50 MB.")
+    try:
+        design_df, _ = read_dataset(file.filename, content)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"No se pudo leer el archivo: {e}")
+
+    store.set_experiment_design_df(session_id, experiment_id, design_df, file.filename)
+    task_profile = designmod.suggest_task_profile_columns(design_df)
+    return {
+        "filename": file.filename,
+        "n_rows": int(design_df.shape[0]),
+        "design_columns": list(design_df.columns),
+        **task_profile,
+    }
+
+
+@app.get("/api/design/{session_id}/{experiment_id}/design-values")
+async def design_column_values(session_id: str, experiment_id: str, column: str, limit: int = 60):
+    """Valores distintos de una columna del fichero de diseño, y una
+    sugerencia de a qué valor de esos corresponde cada valor observado en
+    una columna del fichero de respuestas — para cuando el usuario marca a
+    mano una columna del diseño como clave de cruce (las auto-detectadas ya
+    vienen con esto resuelto en `/suggest`)."""
+    _require_kind(session_id, experiment_id, "conjoint_design")
+    design_df = _get_design_df_or_400(session_id, experiment_id)
+    if column not in design_df.columns:
+        raise HTTPException(404, f'La columna "{column}" no existe en el fichero de diseño.')
+    design_values = sorted(design_df[column].astype(str).unique())[:limit]
+
+    respondent_column = None
+    value_map: dict[str, str] = {}
+    default_design_value = None
+    suggested_respondent_column = designmod.suggest_respondent_column_for(column, store.get_filtered_df(session_id, experiment_id))
+    if suggested_respondent_column:
+        respondent_column = suggested_respondent_column
+        value_map, default_design_value = designmod.suggest_value_map(
+            store.get_filtered_df(session_id, experiment_id), respondent_column, design_values
+        )
+
+    return {
+        "design_values": design_values,
+        "suggested_respondent_column": respondent_column,
+        "value_map": value_map,
+        "default_design_value": default_design_value,
+    }
+
+
+@app.get("/api/design/{session_id}/{experiment_id}/value-map-suggestion")
+async def design_value_map_suggestion(session_id: str, experiment_id: str, respondent_column: str, design_column: str):
+    """Recalcula la sugerencia de correspondencia de valores cuando el
+    usuario elige a mano una columna de respuestas distinta a la sugerida
+    inicialmente para una clave de cruce."""
+    _require_kind(session_id, experiment_id, "conjoint_design")
+    respondent_df = store.get_filtered_df(session_id, experiment_id)
+    design_df = _get_design_df_or_400(session_id, experiment_id)
+    if respondent_column not in respondent_df.columns:
+        raise HTTPException(404, f'La columna "{respondent_column}" no existe en el fichero de respuestas.')
+    if design_column not in design_df.columns:
+        raise HTTPException(404, f'La columna "{design_column}" no existe en el fichero de diseño.')
+    design_values = sorted(design_df[design_column].astype(str).unique())
+    value_map, default_design_value = designmod.suggest_value_map(respondent_df, respondent_column, design_values)
+    return {"design_values": design_values, "value_map": value_map, "default_design_value": default_design_value}
+
+
+@app.get("/api/design/{session_id}/{experiment_id}/suggest")
+async def suggest_design_mapping(session_id: str, experiment_id: str, task_column: str, profile_column: str):
+    _require_kind(session_id, experiment_id, "conjoint_design")
+    respondent_df = store.get_filtered_df(session_id, experiment_id)
+    design_df = _get_design_df_or_400(session_id, experiment_id)
+
+    if task_column not in design_df.columns or profile_column not in design_df.columns:
+        raise HTTPException(400, "La columna de tarea o de perfil no existe en el fichero de diseño.")
+
+    tasks = sorted(design_df[task_column].astype(str).unique(), key=lambda x: (len(x), x))
+    profiles = sorted(design_df[profile_column].astype(str).unique())
+
+    remaining = designmod.suggest_remaining_columns(design_df, task_column, profile_column)
+    join_candidates = designmod.suggest_join_key_columns(design_df, respondent_df, remaining)
+
+    choice_columns = designmod.suggest_choice_columns(respondent_df, tasks)
+    choice_value_map, unmatched_choice_values = mappingmod.infer_choice_value_map(respondent_df, choice_columns, profiles)
+
+    join_key_suggestions = []
+    for design_col in join_candidates:
+        resp_col = designmod.suggest_respondent_column_for(design_col, respondent_df)
+        design_values = sorted(design_df[design_col].astype(str).unique())
+        value_map, default_value = ({}, None)
+        if resp_col:
+            value_map, default_value = designmod.suggest_value_map(respondent_df, resp_col, design_values)
+        join_key_suggestions.append({
+            "design_column": design_col,
+            "respondent_column": resp_col,
+            "design_values": design_values,
+            "value_map": value_map,
+            "default_design_value": default_value,
+        })
+
+    return {
+        "tasks": tasks,
+        "profiles": profiles,
+        "remaining_columns": remaining,
+        "join_key_candidates": join_key_suggestions,
+        "choice_columns": choice_columns,
+        "choice_value_map": choice_value_map,
+        "unmatched_choice_values": unmatched_choice_values,
+    }
+
+
+@app.post("/api/design/{session_id}/{experiment_id}/apply")
+async def apply_design_mapping(session_id: str, experiment_id: str, payload: ExternalDesignMappingConfig):
+    _get_experiment_or_404(session_id, experiment_id)
+    _require_kind(session_id, experiment_id, "conjoint_design")
+    respondent_df = store.get_filtered_df(session_id, experiment_id)
+    design_df = _get_design_df_or_400(session_id, experiment_id)
+
+    issues = designmod.validate_external_design_config(respondent_df, design_df, payload)
+
+    try:
+        long_df = designmod.build_long_df(respondent_df, design_df, payload)
+    except Exception as e:
+        raise HTTPException(400, f"No se pudo cruzar el diseño con las respuestas: {e}")
+
+    store.set_experiment_mapping(session_id, experiment_id, payload, long_df)
+    summary = reshapemod.reshape_summary(long_df, payload)
+    return {"issues": issues, "summary": summary}
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

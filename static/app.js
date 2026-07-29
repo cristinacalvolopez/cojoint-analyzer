@@ -12,6 +12,7 @@
     conjoint: {},             // id -> {draft, unmatchedColumns, candidateTasks, candidateProfiles,
                                //        reshapeSummary, reshapePreview, amceResult, amceMethod, choiceValueOptions}
     vignette: {},             // id -> {draft, candidateOutcomes, candidateAttributes, summary, preview, amceResult}
+    design: {},               // id -> {designFilename, designColumns, taskColumn, profileColumn, draft, reshapeSummary, reshapePreview, amceResult, amceMethod}
     filterValueCache: {},     // "column" -> [{value,n}]
   };
 
@@ -146,8 +147,27 @@
         siguiente.</p>`,
     },
     {
+      id: "help-diseno-externo",
+      title: "6 · Elección con diseño externo",
+      body: `
+        <p>Úsalo cuando el fichero de respuestas solo guarda qué perfil ganó cada tarea y un código de versión
+        aleatoria, sin los atributos de cada perfil incrustados como columnas (p. ej. "Candidato/a 1" vs
+        "Candidato/a 2", con los rasgos de cada candidato en un fichero de diseño aparte).</p>
+        <ul>
+          <li>Sube el <strong>fichero de diseño</strong> (el que generó la aleatorización) y confirma qué columna
+          es la tarea/pantalla y cuál el perfil/posición.</li>
+          <li>Pulsa "Detectar mapeo": propone la columna de elección de cada tarea y, entre el resto de columnas
+          del diseño, cuáles parecen <strong>claves de cruce</strong> (una variable de contexto, como la versión
+          asignada a cada entrevistado) frente a <strong>atributos</strong> que entrarán en la estimación.</li>
+          <li>Para cada clave de cruce, indica la columna equivalente en el fichero de respuestas y revisa la
+          tabla de correspondencia de valores (p. ej. "Versión 19" del fichero de respuestas → "19" del diseño):
+          la sugerencia automática puede fallar en casos concretos (nombres de región distintos, etc.), así que
+          conviene repasarla antes de aplicar el mapeo.</li>
+        </ul>`,
+    },
+    {
       id: "help-reestructuracion",
-      title: "6 · Reestructuración",
+      title: "7 · Reestructuración",
       body: `
         <p>Al pulsar "Aplicar mapeo", el archivo (una fila por entrevistado) se convierte en formato largo: una
         fila por cada perfil visto en cada tarea. Verás un resumen con entrevistados, tareas, perfiles, conjuntos
@@ -158,7 +178,7 @@
     },
     {
       id: "help-amce",
-      title: "7 · Estimación (AMCE / viñeta)",
+      title: "8 · Estimación (AMCE / viñeta)",
       body: `
         <p>Elige el <strong>método</strong> (solo para Elección): OLS con errores agrupados por entrevistado, o
         logit condicional dentro de cada conjunto de elección. Marca qué atributos incluir y, si quieres, cambia
@@ -245,6 +265,7 @@
     state.experimentOrder = [];
     state.conjoint = {};
     state.vignette = {};
+    state.design = {};
     state.filterValueCache = {};
 
     for (const e of data.experiments) {
@@ -281,7 +302,7 @@
     wrap.innerHTML = state.experimentOrder.map((id) => {
       const e = state.experiments[id];
       const isActive = id === state.activeExperimentId;
-      const kindLabel = e.kind === "vignette" ? "Viñeta" : "Elección";
+      const kindLabel = { vignette: "Viñeta", conjoint_design: "Diseño externo" }[e.kind] || "Elección";
       return `
         <div class="experiment-item ${isActive ? "is-active" : ""}" data-id="${escapeHtml(id)}">
           <span class="experiment-item__kind is-${e.kind}">${kindLabel}</span>
@@ -316,6 +337,7 @@
           <select id="newExpKind">
             <option value="conjoint">Elección (perfiles enfrentados → AMCE)</option>
             <option value="vignette">Viñeta (perfil único → variable de resultado)</option>
+            <option value="conjoint_design">Elección con diseño externo (atributos en otro fichero)</option>
           </select>
         </label>
         <div id="newExpError" class="modal-error" hidden></div>
@@ -397,6 +419,8 @@
         state.conjoint[created.id] = JSON.parse(JSON.stringify(state.conjoint[id]));
       } else if (exp.kind === "vignette" && state.vignette[id]) {
         state.vignette[created.id] = JSON.parse(JSON.stringify(state.vignette[id]));
+      } else if (exp.kind === "conjoint_design" && state.design[id]) {
+        state.design[created.id] = JSON.parse(JSON.stringify(state.design[id]));
       }
       closeModal();
       renderExperimentsList();
@@ -425,6 +449,7 @@
       delete state.experiments[id];
       delete state.conjoint[id];
       delete state.vignette[id];
+      delete state.design[id];
       state.experimentOrder = state.experimentOrder.filter((x) => x !== id);
       closeModal();
       if (state.activeExperimentId === id) {
@@ -449,17 +474,23 @@
 
     el("conjointMappingPanel").hidden = exp.kind !== "conjoint";
     el("vignetteMappingPanel").hidden = exp.kind !== "vignette";
-    el("amceMethodField").hidden = exp.kind !== "conjoint";
+    el("designMappingPanel").hidden = exp.kind !== "conjoint_design";
+    el("amceMethodField").hidden = exp.kind === "vignette";
 
     if (exp.kind === "conjoint") {
       await ensureConjointState(id);
       renderMappingStep();
       renderReshapeStepForActive();
       renderAmceStepForActive();
-    } else {
+    } else if (exp.kind === "vignette") {
       await ensureVignetteState(id);
       renderVignetteMappingStep();
       renderVignetteReshapeStepForActive();
+      renderAmceStepForActive();
+    } else {
+      await ensureDesignState(id);
+      renderDesignMappingStep();
+      renderReshapeStepForActive();
       renderAmceStepForActive();
     }
     goToStep("mapping");
@@ -545,6 +576,7 @@
   const STEP_LABELS = {
     conjoint: ["Mapeo de variables", "Reestructuración", "Estimación AMCE"],
     vignette: ["Mapeo de variables", "Vista previa", "Estimación"],
+    conjoint_design: ["Mapeo y cruce del diseño", "Reestructuración", "Estimación AMCE"],
   };
   const STEPS = ["mapping", "reshape", "amce"];
   let currentStep = "mapping";
@@ -571,6 +603,10 @@
     if (exp.kind === "vignette" && state.vignette[exp.id]) {
       if (state.vignette[exp.id].summary) markStepDone("mapping");
       if (state.vignette[exp.id].amceResult) markStepDone("reshape");
+    }
+    if (exp.kind === "conjoint_design" && state.design[exp.id]) {
+      if (state.design[exp.id].reshapeSummary) markStepDone("mapping");
+      if (state.design[exp.id].amceResult) markStepDone("reshape");
     }
     goToStep("mapping");
   }
@@ -949,8 +985,8 @@
       el("sumFilter").textContent = `Filtro: ${exp.sample_filter.column} ∈ {${exp.sample_filter.values.join(", ")}}`;
     }
 
-    if (exp.kind === "conjoint") {
-      const cs = currentConjointState();
+    if (isChoiceLikeKind(exp.kind)) {
+      const cs = currentAmceCapableState();
       el("sumConjointRow").hidden = false;
       const s = cs.reshapeSummary;
       el("sumTasks").textContent = s ? s.n_tasks : "–";
@@ -973,7 +1009,7 @@
   }
 
   function renderReshapeStepForActive() {
-    const cs = currentConjointState();
+    const cs = currentAmceCapableState();
     el("conjointReshapeContent").hidden = false;
     el("previewTitle").textContent = "Vista previa del fichero largo (formato tidy)";
     if (!cs.reshapeSummary) {
@@ -1051,7 +1087,7 @@
   el("downloadButtons").querySelectorAll("button[data-download-format]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const exp = activeExperiment();
-      const base = exp.kind === "conjoint"
+      const base = isChoiceLikeKind(exp.kind)
         ? `/api/reshape/${state.sessionId}/${exp.id}/download`
         : `/api/vignette/${state.sessionId}/${exp.id}/download`;
       window.location.href = `${base}?format=${btn.dataset.downloadFormat}`;
@@ -1217,24 +1253,469 @@
   }
 
   // =====================================================================
+  // Conjunto de tipo "elección con diseño externo" · Paso 1 · Mapeo
+  // =====================================================================
+
+  function blankDesignState() {
+    return {
+      designFilename: null,
+      designNRows: 0,
+      designColumns: [],
+      taskColumn: null,
+      profileColumn: null,
+      tasks: [],
+      profiles: [],
+      remainingColumns: [],
+      joinKeyCandidates: [],
+      draft: {
+        respondent_id: null,
+        choice_columns: {},
+        choice_value_map: {},
+        columnRoles: {},   // design_column -> "attribute" | "joinkey"
+        attributes: [],    // [{name, label, design_column}]
+        joinKeys: {},       // design_column -> {respondent_column, value_map, default_design_value}
+      },
+      unmatchedChoiceValues: [],
+      choiceValueOptions: {},
+      joinKeyValueCache: {},   // design_column -> design_values[]
+      reshapeSummary: null,
+      reshapePreview: null,
+      amceResult: null,
+      amceMethod: "ols",
+    };
+  }
+
+  async function ensureDesignState(id) {
+    if (state.design[id]) return;
+    state.design[id] = blankDesignState();
+  }
+
+  function currentDesignState() {
+    return state.design[state.activeExperimentId];
+  }
+
+  function renderDesignMappingStep() {
+    const ds = currentDesignState();
+
+    el("designFileInfo").hidden = !ds.designFilename;
+    if (ds.designFilename) {
+      el("designFileName").textContent = ds.designFilename;
+      el("designFileRows").textContent = ds.designNRows.toLocaleString("es-ES");
+    }
+
+    const hasDesign = ds.designColumns.length > 0;
+    el("designTaskProfileCard").hidden = !hasDesign;
+    if (hasDesign) {
+      const colOptions = (selected) => ds.designColumns.map((c) => `<option value="${escapeHtml(c)}" ${c === selected ? "selected" : ""}>${escapeHtml(c)}</option>`).join("");
+      el("designTaskColumnSelect").innerHTML = colOptions(ds.taskColumn);
+      el("designProfileColumnSelect").innerHTML = colOptions(ds.profileColumn);
+    }
+
+    const hasStructure = ds.tasks.length > 0;
+    el("designStructureCard").hidden = !hasStructure;
+    el("designColumnsCard").hidden = !hasStructure;
+    if (hasStructure) {
+      el("designRespondentIdSelect").innerHTML = '<option value="">(usar número de fila)</option>' + columnOptionsHtml(ds.draft.respondent_id).replace('<option value="">—</option>', "");
+      el("designRespondentIdSelect").value = ds.draft.respondent_id || "";
+      renderDesignChoiceGrid();
+      renderDesignColumnsList();
+    }
+    updateSidebarSummary();
+  }
+
+  el("designRespondentIdSelect").addEventListener("change", (e) => {
+    currentDesignState().draft.respondent_id = e.target.value || null;
+  });
+
+  // ---------- Subida del fichero de diseño ----------
+
+  const designDropzone = el("designDropzone");
+  const designFileInput = el("designFileInput");
+
+  ["dragenter", "dragover"].forEach((evtName) =>
+    designDropzone.addEventListener(evtName, (e) => { e.preventDefault(); designDropzone.classList.add("is-dragover"); })
+  );
+  ["dragleave", "drop"].forEach((evtName) =>
+    designDropzone.addEventListener(evtName, (e) => { e.preventDefault(); designDropzone.classList.remove("is-dragover"); })
+  );
+  designDropzone.addEventListener("drop", (e) => {
+    const file = e.dataTransfer.files[0];
+    if (file) handleDesignUpload(file);
+  });
+  designFileInput.addEventListener("change", () => {
+    if (designFileInput.files[0]) handleDesignUpload(designFileInput.files[0]);
+  });
+
+  function setDesignUploadStatus(message, type) {
+    const statusEl = el("designUploadStatus");
+    statusEl.hidden = !message;
+    statusEl.textContent = message || "";
+    statusEl.className = "upload-status" + (type ? ` is-${type}` : "");
+  }
+
+  async function handleDesignUpload(file) {
+    setDesignUploadStatus("Procesando archivo…", "loading");
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await fetch(`/api/design/${state.sessionId}/${state.activeExperimentId}/upload`, { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Error al procesar el archivo.");
+      setDesignUploadStatus("", null);
+
+      const ds = currentDesignState();
+      ds.designFilename = data.filename;
+      ds.designNRows = data.n_rows;
+      ds.designColumns = data.design_columns;
+      ds.taskColumn = data.design_task_column;
+      ds.profileColumn = data.design_profile_column;
+      ds.tasks = [];
+      ds.profiles = [];
+      ds.reshapeSummary = null;
+      ds.reshapePreview = null;
+      ds.amceResult = null;
+      if (state.experiments[state.activeExperimentId]) state.experiments[state.activeExperimentId].has_design_file = true;
+      renderDesignMappingStep();
+    } catch (err) {
+      setDesignUploadStatus(err.message, "error");
+    }
+  }
+
+  // ---------- Detección de tarea/perfil/elección/claves de cruce ----------
+
+  el("designDetectBtn").addEventListener("click", detectDesignMapping);
+
+  async function detectDesignMapping() {
+    const ds = currentDesignState();
+    const taskCol = el("designTaskColumnSelect").value;
+    const profileCol = el("designProfileColumnSelect").value;
+    if (!taskCol || !profileCol) { alert("Elige la columna de tarea y la de perfil."); return; }
+    if (taskCol === profileCol) { alert("La columna de tarea y la de perfil no pueden ser la misma."); return; }
+    ds.taskColumn = taskCol;
+    ds.profileColumn = profileCol;
+
+    const params = new URLSearchParams({ task_column: taskCol, profile_column: profileCol });
+    const suggestion = await getJson(`/api/design/${state.sessionId}/${state.activeExperimentId}/suggest?${params}`);
+
+    ds.tasks = suggestion.tasks;
+    ds.profiles = suggestion.profiles;
+    ds.remainingColumns = suggestion.remaining_columns;
+    ds.joinKeyCandidates = suggestion.join_key_candidates;
+    ds.unmatchedChoiceValues = suggestion.unmatched_choice_values;
+
+    ds.draft.choice_columns = suggestion.choice_columns;
+    ds.draft.choice_value_map = suggestion.choice_value_map;
+    ds.draft.columnRoles = {};
+    ds.draft.joinKeys = {};
+    ds.draft.attributes = [];
+    ds.joinKeyValueCache = {};
+
+    const candidateByCol = {};
+    for (const jk of suggestion.join_key_candidates) candidateByCol[jk.design_column] = jk;
+
+    for (const col of suggestion.remaining_columns) {
+      const candidate = candidateByCol[col];
+      if (candidate) {
+        ds.draft.columnRoles[col] = "joinkey";
+        ds.draft.joinKeys[col] = {
+          respondent_column: candidate.respondent_column || "",
+          value_map: { ...candidate.value_map },
+          default_design_value: candidate.default_design_value || "",
+        };
+        ds.joinKeyValueCache[col] = candidate.design_values;
+      } else {
+        ds.draft.columnRoles[col] = "attribute";
+        ds.draft.attributes.push({ name: col, label: col, design_column: col });
+      }
+    }
+
+    renderDesignMappingStep();
+  }
+
+  // ---------- Columna de elección por tarea ----------
+
+  async function designChoiceValueOptionsFor(ds, columns) {
+    const uniqueCols = [...new Set(columns.filter(Boolean))];
+    const missing = uniqueCols.filter((c) => !ds.choiceValueOptions[c]);
+    await Promise.all(missing.map(async (col) => {
+      const data = await getJson(`/api/columns/${state.sessionId}/values?column=${encodeURIComponent(col)}&limit=60`);
+      ds.choiceValueOptions[col] = data.values.map((v) => v.value);
+    }));
+    const merged = new Set();
+    for (const col of uniqueCols) (ds.choiceValueOptions[col] || []).forEach((v) => merged.add(v));
+    return [...merged];
+  }
+
+  async function renderDesignChoiceGrid() {
+    const ds = currentDesignState();
+    const wrap = el("designChoiceGridWrap");
+    if (!ds.tasks.length) { wrap.innerHTML = ""; return; }
+
+    const observedValues = await designChoiceValueOptionsFor(ds, Object.values(ds.draft.choice_columns));
+
+    let html = '<table class="mapping-grid"><thead><tr><th>Tarea</th><th>Columna de elección</th></tr></thead><tbody>';
+    for (const task of ds.tasks) {
+      const current = ds.draft.choice_columns[task] || "";
+      const cls = current ? "is-matched" : "is-unmatched";
+      html += `<tr><th>${escapeHtml(task)}</th><td><select class="${cls}" data-task="${escapeHtml(task)}">${columnOptionsHtml(current)}</select></td></tr>`;
+    }
+    html += "</tbody></table>";
+    html += '<div style="padding:14px"><p class="text-secondary" style="font-size:12.5px;margin-bottom:10px">¿Con qué valor se codifica cada perfil en la columna de elección?</p>';
+    for (const p of ds.profiles) {
+      const raw = Object.entries(ds.draft.choice_value_map).find(([, v]) => v === p);
+      const rawValue = raw ? raw[0] : "";
+      const options = ['<option value="">(sin usar)</option>'];
+      const seen = new Set();
+      if (rawValue && !observedValues.includes(rawValue)) { options.push(`<option value="${escapeHtml(rawValue)}" selected>${escapeHtml(rawValue)}</option>`); seen.add(rawValue); }
+      for (const v of observedValues) {
+        if (seen.has(v)) continue;
+        options.push(`<option value="${escapeHtml(v)}" ${v === rawValue ? "selected" : ""}>${escapeHtml(v)}</option>`);
+      }
+      html += `<label class="field" style="display:inline-flex;margin-right:16px"><span>Perfil ${escapeHtml(p)} = </span><select data-profile-value="${escapeHtml(p)}">${options.join("")}</select></label>`;
+    }
+    if (ds.unmatchedChoiceValues.length) {
+      html += `<p class="text-muted" style="font-size:12px;margin-top:10px">Valores observados sin asignar a ningún perfil: ${ds.unmatchedChoiceValues.map(escapeHtml).join(", ")}</p>`;
+    }
+    html += "</div>";
+    wrap.innerHTML = html;
+
+    wrap.querySelectorAll("select[data-task]").forEach((sel) => {
+      sel.addEventListener("change", (e) => {
+        ds.draft.choice_columns[e.target.dataset.task] = e.target.value || undefined;
+        if (!e.target.value) delete ds.draft.choice_columns[e.target.dataset.task];
+        e.target.className = e.target.value ? "is-matched" : "is-unmatched";
+        renderDesignChoiceGrid();
+      });
+    });
+    wrap.querySelectorAll("select[data-profile-value]").forEach((sel) => {
+      sel.addEventListener("change", (e) => {
+        const profile = e.target.dataset.profileValue;
+        for (const k of Object.keys(ds.draft.choice_value_map)) {
+          if (ds.draft.choice_value_map[k] === profile) delete ds.draft.choice_value_map[k];
+        }
+        if (e.target.value) ds.draft.choice_value_map[e.target.value] = profile;
+      });
+    });
+  }
+
+  // ---------- Atributos y claves de cruce ----------
+
+  function renderDesignColumnsList() {
+    const ds = currentDesignState();
+    const wrap = el("designColumnsList");
+    if (!ds.remainingColumns.length) {
+      wrap.innerHTML = '<p class="empty-state">El diseño no tiene columnas además de la tarea y el perfil.</p>';
+      return;
+    }
+    wrap.innerHTML = ds.remainingColumns.map((col) => {
+      const role = ds.draft.columnRoles[col] || "attribute";
+      let inner;
+      if (role === "attribute") {
+        const attr = ds.draft.attributes.find((a) => a.design_column === col) || { label: col };
+        inner = `<label class="field" style="margin-top:8px"><span>Etiqueta</span><input type="text" data-attr-label="${escapeHtml(col)}" value="${escapeHtml(attr.label)}"></label>`;
+      } else {
+        const jk = ds.draft.joinKeys[col] || { respondent_column: "", value_map: {}, default_design_value: "" };
+        inner = `
+          <div class="mapping-toolbar" style="margin-top:8px">
+            <label class="field"><span>Columna en las respuestas</span>
+              <select data-jk-respondent="${escapeHtml(col)}">${columnOptionsHtml(jk.respondent_column)}</select>
+            </label>
+          </div>
+          <div data-jk-values="${escapeHtml(col)}"></div>
+        `;
+      }
+      return `
+        <div class="card" style="margin-bottom:12px;padding:14px 16px">
+          <div class="mapping-toolbar" style="margin-bottom:0;align-items:center">
+            <strong>${escapeHtml(col)}</strong>
+            <select data-role="${escapeHtml(col)}" style="margin-left:auto">
+              <option value="attribute" ${role === "attribute" ? "selected" : ""}>Atributo (entra en la estimación)</option>
+              <option value="joinkey" ${role === "joinkey" ? "selected" : ""}>Clave de cruce</option>
+            </select>
+          </div>
+          ${inner}
+        </div>
+      `;
+    }).join("");
+
+    wrap.querySelectorAll("select[data-role]").forEach((sel) => {
+      sel.addEventListener("change", (e) => {
+        const col = e.target.dataset.role;
+        const role = e.target.value;
+        ds.draft.columnRoles[col] = role;
+        if (role === "attribute") {
+          delete ds.draft.joinKeys[col];
+          if (!ds.draft.attributes.some((a) => a.design_column === col)) {
+            ds.draft.attributes.push({ name: col, label: col, design_column: col });
+          }
+        } else {
+          ds.draft.attributes = ds.draft.attributes.filter((a) => a.design_column !== col);
+          if (!ds.draft.joinKeys[col]) ds.draft.joinKeys[col] = { respondent_column: "", value_map: {}, default_design_value: "" };
+        }
+        renderDesignColumnsList();
+      });
+    });
+
+    wrap.querySelectorAll("input[data-attr-label]").forEach((input) => {
+      input.addEventListener("change", (e) => {
+        const col = e.target.dataset.attrLabel;
+        const attr = ds.draft.attributes.find((a) => a.design_column === col);
+        if (attr) attr.label = e.target.value || col;
+      });
+    });
+
+    wrap.querySelectorAll("select[data-jk-respondent]").forEach((sel) => {
+      sel.addEventListener("change", async (e) => {
+        const col = e.target.dataset.jkRespondent;
+        const respondentCol = e.target.value;
+        ds.draft.joinKeys[col].respondent_column = respondentCol;
+        if (respondentCol) {
+          const params = new URLSearchParams({ respondent_column: respondentCol, design_column: col });
+          const suggestion = await getJson(`/api/design/${state.sessionId}/${state.activeExperimentId}/value-map-suggestion?${params}`);
+          ds.draft.joinKeys[col].value_map = suggestion.value_map;
+          ds.draft.joinKeys[col].default_design_value = suggestion.default_design_value || "";
+          ds.joinKeyValueCache[col] = suggestion.design_values;
+        }
+        renderJoinKeyValueTable(col);
+      });
+    });
+
+    for (const col of ds.remainingColumns) {
+      if ((ds.draft.columnRoles[col] || "attribute") === "joinkey") renderJoinKeyValueTable(col);
+    }
+  }
+
+  async function renderJoinKeyValueTable(designCol) {
+    const ds = currentDesignState();
+    const container = document.querySelector(`[data-jk-values="${CSS.escape(designCol)}"]`);
+    if (!container) return;
+    const jk = ds.draft.joinKeys[designCol];
+    if (!jk.respondent_column) {
+      container.innerHTML = '<p class="text-muted" style="font-size:12px">Elige antes la columna de respuestas.</p>';
+      return;
+    }
+
+    let designValues = ds.joinKeyValueCache[designCol];
+    if (!designValues) {
+      const data = await getJson(`/api/design/${state.sessionId}/${state.activeExperimentId}/design-values?column=${encodeURIComponent(designCol)}`);
+      designValues = data.design_values;
+      ds.joinKeyValueCache[designCol] = designValues;
+    }
+    const observedData = await getJson(`/api/columns/${state.sessionId}/values?column=${encodeURIComponent(jk.respondent_column)}&limit=60`);
+    const observedValues = observedData.values.map((v) => v.value);
+
+    const designOptions = (selected) => ['<option value="">(sin traducir)</option>', ...designValues.map((v) => `<option value="${escapeHtml(v)}" ${v === selected ? "selected" : ""}>${escapeHtml(v)}</option>`)].join("");
+
+    let html = `<label class="field" style="margin-top:10px"><span>Valor por defecto (para lo que no se traduzca)</span><select data-jk-default="${escapeHtml(designCol)}">${designOptions(jk.default_design_value)}</select></label>`;
+    html += '<table class="mapping-grid" style="margin-top:10px"><thead><tr><th>Valor en respuestas</th><th>Valor en el diseño</th></tr></thead><tbody>';
+    for (const v of observedValues) {
+      const mapped = jk.value_map[v] || "";
+      html += `<tr><td>${escapeHtml(v)}</td><td><select data-jk-value="${escapeHtml(designCol)}" data-jk-observed="${escapeHtml(v)}">${designOptions(mapped)}</select></td></tr>`;
+    }
+    html += "</tbody></table>";
+    container.innerHTML = html;
+
+    container.querySelector("select[data-jk-default]").addEventListener("change", (e) => {
+      jk.default_design_value = e.target.value;
+    });
+    container.querySelectorAll("select[data-jk-value]").forEach((sel) => {
+      sel.addEventListener("change", (e) => {
+        const observed = e.target.dataset.jkObserved;
+        if (e.target.value) jk.value_map[observed] = e.target.value;
+        else delete jk.value_map[observed];
+      });
+    });
+  }
+
+  // ---------- Aplicar mapeo ----------
+
+  el("applyDesignMappingBtn").addEventListener("click", applyDesignMapping);
+
+  async function applyDesignMapping() {
+    const id = state.activeExperimentId;
+    const ds = currentDesignState();
+    const d = ds.draft;
+
+    if (!ds.tasks.length) { alert('Pulsa "Detectar mapeo" primero.'); return; }
+    if (!d.attributes.length) { alert("Marca al menos una columna del diseño como atributo."); return; }
+
+    const joinKeys = [];
+    for (const col of ds.remainingColumns) {
+      if ((d.columnRoles[col] || "attribute") !== "joinkey") continue;
+      const jk = d.joinKeys[col];
+      if (!jk || !jk.respondent_column) {
+        alert(`Falta elegir la columna de respuestas para la clave de cruce "${col}".`);
+        return;
+      }
+      joinKeys.push({
+        design_column: col,
+        respondent_column: jk.respondent_column,
+        value_map: jk.value_map,
+        default_design_value: jk.default_design_value || null,
+      });
+    }
+
+    const payload = {
+      respondent_id: d.respondent_id || null,
+      tasks: ds.tasks,
+      profiles: ds.profiles,
+      design_task_column: ds.taskColumn,
+      design_profile_column: ds.profileColumn,
+      choice_columns: d.choice_columns,
+      choice_value_map: d.choice_value_map,
+      join_keys: joinKeys,
+      attributes: d.attributes.map((a) => ({ name: a.name, label: a.label || a.name, design_column: a.design_column })),
+    };
+
+    const issuesEl = el("designMappingIssues");
+    issuesEl.innerHTML = "";
+    try {
+      const result = await postJson(`/api/design/${state.sessionId}/${id}/apply`, payload);
+      issuesEl.innerHTML = result.issues.map((i) => `<div class="issue-list__item${i.severity === "info" ? " issue-list__item--info" : ""}">${escapeHtml(i.text)}</div>`).join("");
+      ds.reshapeSummary = result.summary;
+      ds.reshapePreview = null;
+      ds.amceResult = null;
+      state.experiments[id].is_mapped = true;
+      markStepDone("mapping");
+      updateSidebarSummary();
+      ds.reshapePreview = await getJson(`/api/reshape/${state.sessionId}/${id}/preview?limit=50`);
+      renderReshapeStepForActive();
+      resetAmceStep();
+      goToStep("reshape");
+    } catch (err) {
+      issuesEl.innerHTML = `<div class="issue-list__item">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  // =====================================================================
   // Paso 3 · Estimación (común a elección y viñeta)
   // =====================================================================
 
-  function resetAmceStep() {
+  // El conjunto con diseño externo reutiliza tal cual el endpoint y el
+  // formulario de AMCE del conjoint normal (mismo formato de fichero largo);
+  // solo la viñeta necesita un tratamiento distinto (sin método OLS/clogit,
+  // sin conjuntos de elección).
+  function isChoiceLikeKind(kind) {
+    return kind === "conjoint" || kind === "conjoint_design";
+  }
+
+  function currentAmceCapableState() {
     const exp = activeExperiment();
-    if (exp.kind === "conjoint") currentConjointState().amceResult = null;
-    else currentVignetteState().amceResult = null;
+    if (exp.kind === "conjoint") return currentConjointState();
+    if (exp.kind === "conjoint_design") return currentDesignState();
+    return currentVignetteState();
+  }
+
+  function resetAmceStep() {
+    currentAmceCapableState().amceResult = null;
     renderAmceStepForActive();
   }
 
   function renderAmceStepForActive() {
     const exp = activeExperiment();
-    const attributes = exp.kind === "conjoint"
-      ? currentConjointState().draft.attributes
-      : currentVignetteState().draft.attributes;
-    const mapped = exp.kind === "conjoint"
-      ? !!currentConjointState().reshapeSummary
-      : !!currentVignetteState().summary;
+    const cs = currentAmceCapableState();
+    const attributes = cs.draft.attributes;
+    const mapped = isChoiceLikeKind(exp.kind) ? !!cs.reshapeSummary : !!cs.summary;
 
     if (!mapped || !attributes.length) {
       el("amceEmpty").hidden = false;
@@ -1256,7 +1737,7 @@
       cb.addEventListener("change", renderBaselineSelectors);
     });
 
-    const existingResult = exp.kind === "conjoint" ? currentConjointState().amceResult : currentVignetteState().amceResult;
+    const existingResult = cs.amceResult;
     if (existingResult) {
       renderAmceResult(existingResult);
       markStepDone("reshape");
@@ -1269,10 +1750,11 @@
 
   function renderBaselineSelectors() {
     const exp = activeExperiment();
+    const cs = currentAmceCapableState();
     const checked = Array.from(el("amceAttributes").querySelectorAll(".amce-attr-check:checked")).map((c) => c.value);
     let levelsByAttr = {};
-    if (exp.kind === "conjoint") {
-      const coverage = (currentConjointState().reshapeSummary && currentConjointState().reshapeSummary.attribute_coverage) || {};
+    if (isChoiceLikeKind(exp.kind)) {
+      const coverage = (cs.reshapeSummary && cs.reshapeSummary.attribute_coverage) || {};
       for (const attr of checked) levelsByAttr[attr] = (coverage[attr] && coverage[attr].levels) || [];
     } else {
       // Para viñetas no tenemos un resumen de cobertura previo: se deja sin
@@ -1297,13 +1779,14 @@
     if (!btn) return;
     document.querySelectorAll("#amceMethodToggle .segmented__btn").forEach((b) => b.classList.remove("is-active"));
     btn.classList.add("is-active");
-    currentConjointState().amceMethod = btn.dataset.method;
+    currentAmceCapableState().amceMethod = btn.dataset.method;
   });
 
   el("runAmceBtn").addEventListener("click", runAmce);
 
   async function runAmce() {
     const exp = activeExperiment();
+    const cs = currentAmceCapableState();
     const attributes = Array.from(el("amceAttributes").querySelectorAll(".amce-attr-check:checked")).map((c) => c.value);
     if (!attributes.length) { alert("Elige al menos un atributo."); return; }
     const baselines = {};
@@ -1315,15 +1798,12 @@
     el("runAmceBtn").textContent = "Estimando…";
     try {
       let result;
-      if (exp.kind === "conjoint") {
-        const cs = currentConjointState();
+      if (isChoiceLikeKind(exp.kind)) {
         result = await postJson(`/api/amce/${state.sessionId}/${exp.id}`, { method: cs.amceMethod, attributes, baselines });
-        cs.amceResult = result;
       } else {
-        const vs = currentVignetteState();
         result = await postJson(`/api/vignette/${state.sessionId}/${exp.id}/estimate`, { attributes, baselines });
-        vs.amceResult = result;
       }
+      cs.amceResult = result;
       renderAmceResult(result);
       markStepDone("reshape");
     } catch (err) {
@@ -1340,7 +1820,7 @@
     const exp = activeExperiment();
     el("amceResultEmpty").hidden = true;
     el("amceResult").hidden = false;
-    el("amceResultTitle").textContent = exp.kind === "conjoint" ? "Efecto Marginal Medio (AMCE)" : "Efecto estimado por nivel";
+    el("amceResultTitle").textContent = isChoiceLikeKind(exp.kind) ? "Efecto Marginal Medio (AMCE)" : "Efecto estimado por nivel";
 
     const fitStats = [["N", result.n]];
     if (result.method === "ols") {
@@ -1555,8 +2035,7 @@
   });
 
   el("exportCsvBtn").addEventListener("click", () => {
-    const exp = activeExperiment();
-    const result = exp.kind === "conjoint" ? currentConjointState().amceResult : currentVignetteState().amceResult;
+    const result = currentAmceCapableState().amceResult;
     if (!result) return;
     const rows = result.coefficients;
     const header = ["attribute", "level", "baseline", "estimate", "std_err", "ci_low", "ci_high", "p_value", "significant_at_05"];

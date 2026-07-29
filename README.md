@@ -11,7 +11,10 @@ Un mismo fichero puede contener más de un experimento (p. ej. un conjoint de
 elección y una o varias viñetas administradas a submuestras distintas de la
 misma encuesta): la sesión no está limitada a un único mapeo, sino a una
 colección de **conjuntos**, cada uno con su propio tipo, su propio filtro de
-submuestra opcional y su propio mapeo/resultado independientes.
+submuestra opcional y su propio mapeo/resultado independientes. Cuando los
+atributos de un conjoint de elección no están incrustados en el fichero de
+respuestas sino en un fichero de diseño/plan de bloques aparte, un tercer
+tipo de conjunto (`conjoint_design`) permite subir ese fichero y cruzarlo.
 
 Los datos se procesan solo en memoria mientras la aplicación está en
 marcha; no se escriben en disco ni se envían a ningún servidor externo.
@@ -30,17 +33,19 @@ suite.
 ┌─────────────────────┐      ┌──────────────────────────────────────────┐
 │   static/index.html │      │                 app/main.py               │
 │   static/app.js      │◄────┤  FastAPI: upload · experiments · mapping  │
-│   static/styles.css  │ REST│  · reshape · amce/vignette (store.py)     │
+│   static/styles.css  │ REST│  · design · reshape · amce/vignette       │
 └─────────────────────┘      └───────────────┬────────────────────────────┘
                                               │
-                ┌─────────────────┬───────────┼───────────┬─────────────────┐
-                ▼                 ▼           ▼           ▼                 ▼
-         app/readers.py    app/mapping.py  app/reshape.py app/amce.py  app/vignette.py
-         xlsx/csv/dta/sav  detección       wide -> long   OLS clustered mapeo + OLS
-         + etiquetas       automática      (conjoint)     + logit      de viñeta
-         Stata/SPSS        + choice_value_map                condicional (sin reshape)
-         (acentos          contra valores reales
-         corregidos)
+        ┌───────────────┬─────────────┬───────┼───────┬──────────────┬─────────────────┐
+        ▼               ▼             ▼       ▼       ▼              ▼                 ▼
+ app/readers.py  app/mapping.py app/reshape.py │ app/amce.py  app/vignette.py  app/design_join.py
+ xlsx/csv/dta/sav detección      wide -> long   │ OLS clustered mapeo + OLS     cruce con fichero
+ + etiquetas      automática     (conjoint)     │ + logit      de viñeta        de diseño externo
+ Stata/SPSS       + choice_value_map            │  condicional (sin reshape)   (conjoint_design)
+ (acentos         contra valores reales         │
+ corregidos)                              app/export.py
+                                    descarga xlsx/sav/dta/csv
+                                    del fichero reestructurado
 ```
 
 ### Conjuntos: varios experimentos por sesión
@@ -48,8 +53,11 @@ suite.
 `app/store.py` guarda, por sesión, el dataframe original **y una colección
 de conjuntos** (no un único mapeo). Cada conjunto tiene:
 
-- Un **tipo**: `conjoint` (elección entre perfiles enfrentados) o
-  `vignette` (perfil/estímulo único, valorado en una variable de resultado).
+- Un **tipo**: `conjoint` (elección entre perfiles enfrentados, atributos
+  incrustados en el propio fichero), `vignette` (perfil/estímulo único,
+  valorado en una variable de resultado) o `conjoint_design` (elección cuyos
+  atributos viven en un fichero de diseño aparte, cruzado por versión/bloque
+  — ver más abajo).
 - Un **filtro de submuestra** opcional (`SampleFilter`: columna + valores),
   para restringir el conjunto a las filas de una columna tipo `EXPERIMENTO`
   cuando el fichero reparte varios experimentos entre distintas submuestras
@@ -126,6 +134,52 @@ es una observación completa.
    cada atributo, con errores robustos (`cov_type="HC1"`); mismo formato de
    coeficientes que el AMCE, así que reutiliza el mismo dot plot y tabla.
 
+### Flujo funcional — conjuntos de tipo "elección con diseño externo"
+
+Algunos experimentos de elección exportan solo la respuesta (qué perfil ganó
+cada pantalla, p. ej. "Candidato/a 1" vs "Candidato/a 2") y un código de
+versión/bloque asignado a cada entrevistado, sin incrustar los atributos de
+cada perfil como columnas del fichero de respondientes: el diseño real vive
+en un fichero de bloques aparte (el que generó la aleatorización), indexado
+por versión × tarea × perfil — y a veces también por una variable de
+contexto adicional (p. ej. la comunidad autónoma, si el diseño reparte
+bloques por región). `app/design_join.py` cruza ambos ficheros y produce un
+fichero largo con la misma forma que `reshape.wide_to_long()`, así que
+`amce.py` lo procesa sin ningún cambio.
+
+1. **Subir el fichero de diseño** (`POST /api/design/{sesión}/{conjunto}/upload`):
+   un segundo fichero (xlsx/csv/dta/sav), independiente del de respuestas,
+   asociado a este conjunto.
+2. **Tarea y perfil** (`suggest_task_profile_columns`): heurística por
+   nombre habitual ("Pantalla"/"set"/"tarea" para la tarea; "Concepto"/
+   "posición"/"perfil" para el perfil) y, si no hay coincidencia, por
+   cardinalidad (el perfil suele tener 2-4 niveles; la tarea, más).
+3. **Detectar mapeo** (`GET .../suggest`): con la tarea y el perfil ya
+   confirmados, propone la columna de elección de cada tarea
+   (`suggest_choice_columns`, agrupando columnas de respuesta por "familia"
+   de nombre — el número final no basta por sí solo en un cuestionario real
+   con decenas de columnas numeradas) y su traducción a perfil
+   (`infer_choice_value_map`, reutilizado de `mapping.py`).
+4. **Claves de cruce vs. atributos** (`suggest_join_key_columns`): de las
+   columnas del diseño que no son tarea ni perfil, las que coinciden de
+   nombre con una columna del fichero de respuestas se proponen como clave
+   de cruce (típicamente la versión); el resto, como atributo del AMCE.
+   Para cada clave de cruce, `suggest_value_map` propone a qué valor del
+   diseño corresponde cada valor observado en las respuestas (coincidencia
+   exacta → número final coincidente, p. ej. "Versión 19" → "19") y, si
+   sobra un valor de diseño con pinta de "cajón de sastre" ("Resto...",
+   "Otra..."), lo ofrece como valor por defecto — revisable siempre en la
+   interfaz, nunca aplicado a ciegas (`validate_external_design_config`
+   avisa incluso de los valores que caen en el valor por defecto sin haber
+   hecho ninguna coincidencia real, el caso silencioso más peligroso:
+   p. ej. "Comunitat Valenciana" cayendo en "Resto CCAA" en vez de en
+   "País Valencià").
+5. **Aplicar** (`build_long_df`): cruza (`pd.merge`) el fichero de
+   respuestas con el de diseño por las claves de cruce confirmadas, y arma
+   el mismo fichero largo que produciría un conjoint normal — a partir de
+   aquí, reestructuración, estimación, dot plot y descarga son exactamente
+   los mismos que para un conjunto de tipo elección.
+
 ### Manejo de metadatos y etiquetas (Stata/SPSS)
 
 `app/readers.py` sigue las mismas prácticas que `pretest-analyzer`:
@@ -162,6 +216,7 @@ cojoint-analyzer/
 │   ├── reshape.py       # motor de transformación wide -> long (conjoint)
 │   ├── amce.py           # estimación AMCE (OLS clustered / clogit) + utilidades compartidas
 │   ├── vignette.py       # detección, validación y estimación OLS para conjuntos de viñeta
+│   ├── design_join.py     # cruce fichero de diseño externo × respuestas (conjoint_design)
 │   ├── export.py          # descarga del fichero reestructurado/mapeado en xlsx/sav/dta/csv
 │   └── store.py          # sesiones en memoria: dataset + colección de conjuntos
 ├── static/
@@ -176,6 +231,8 @@ cojoint-analyzer/
 │   ├── test_readers.py    # fix de acentos corruptos (mojibake)
 │   ├── test_vignette.py
 │   ├── test_export.py
+│   ├── test_design_join.py
+│   ├── test_design_join_api.py
 │   └── test_api.py        # integración: varios conjuntos por sesión, filtro, viñeta, descargas
 ├── sample_data/
 │   └── generate_sample.py # genera un CSV ancho de ejemplo (300 x 8 tareas x 2 perfiles)
@@ -228,14 +285,3 @@ duplicar/eliminar) con el `TestClient` de FastAPI.
 - Límite de subida: 50 MB por archivo (`MAX_UPLOAD_BYTES` en `app/main.py`).
 - Para producción, ejecuta detrás de un proceso manager (`uvicorn` con
   `--workers`, o un servicio systemd/Docker) y sin `--reload`.
-
-## Fuera de alcance por ahora
-
-Algunos experimentos de elección exportan solo la respuesta (qué perfil
-ganó cada pantalla) y una columna de versión/bloque de diseño, sin incrustar
-los atributos de cada perfil como columnas del fichero de respondientes: el
-diseño real vive en un fichero de bloques aparte, keyed por versión × tarea
-× perfil. Sin ese fichero de diseño no hay manera de calcular un AMCE para
-ese experimento — la app lo señala como "0 atributos detectados" en el paso
-de mapeo, pero unir un fichero de diseño externo queda fuera del alcance
-actual.

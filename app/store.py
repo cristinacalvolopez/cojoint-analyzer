@@ -75,6 +75,8 @@ def _new_experiment_record(name: str, kind: str, sample_filter: SampleFilter | N
         "sample_filter": sample_filter,
         "mapping": None,
         "long_df": None,
+        "design_df": None,
+        "design_filename": None,
     }
 
 
@@ -93,29 +95,25 @@ def _get_experiment_record(session_id: str, experiment_id: str) -> dict:
     return experiment
 
 
-def list_experiments(session_id: str) -> list[dict]:
-    session = _get_record(session_id)
-    return [
-        {
-            "id": e["id"],
-            "name": e["name"],
-            "kind": e["kind"],
-            "sample_filter": e["sample_filter"].model_dump() if e["sample_filter"] else None,
-            "is_mapped": e["mapping"] is not None,
-        }
-        for e in session["experiments"].values()
-    ]
-
-
-def get_experiment_summary(session_id: str, experiment_id: str) -> dict:
-    e = _get_experiment_record(session_id, experiment_id)
+def _experiment_summary_dict(e: dict) -> dict:
     return {
         "id": e["id"],
         "name": e["name"],
         "kind": e["kind"],
         "sample_filter": e["sample_filter"].model_dump() if e["sample_filter"] else None,
         "is_mapped": e["mapping"] is not None,
+        "has_design_file": e.get("design_df") is not None,
+        "design_filename": e.get("design_filename"),
     }
+
+
+def list_experiments(session_id: str) -> list[dict]:
+    session = _get_record(session_id)
+    return [_experiment_summary_dict(e) for e in session["experiments"].values()]
+
+
+def get_experiment_summary(session_id: str, experiment_id: str) -> dict:
+    return _experiment_summary_dict(_get_experiment_record(session_id, experiment_id))
 
 
 def rename_experiment(session_id: str, experiment_id: str, name: str) -> None:
@@ -136,6 +134,8 @@ def duplicate_experiment(session_id: str, experiment_id: str, new_name: str) -> 
     record = _new_experiment_record(new_name, source["kind"], source["sample_filter"])
     record["mapping"] = source["mapping"]
     record["long_df"] = source["long_df"].copy() if source["long_df"] is not None else None
+    record["design_df"] = source["design_df"].copy() if source["design_df"] is not None else None
+    record["design_filename"] = source["design_filename"]
     session["experiments"][record["id"]] = record
     return record["id"]
 
@@ -178,3 +178,19 @@ def get_experiment_mapping(session_id: str, experiment_id: str) -> ConjointMappi
 
 def get_experiment_long_df(session_id: str, experiment_id: str) -> pd.DataFrame | None:
     return _get_experiment_record(session_id, experiment_id)["long_df"]
+
+
+def set_experiment_design_df(session_id: str, experiment_id: str, design_df: pd.DataFrame, filename: str) -> None:
+    """Fichero de diseño/plan de bloques de un conjunto de tipo
+    "conjoint_design": los atributos que vio cada perfil en cada tarea, para
+    cruzarlos con las respuestas (ver `app/design_join.py`)."""
+    experiment = _get_experiment_record(session_id, experiment_id)
+    experiment["design_df"] = design_df
+    experiment["design_filename"] = filename
+    # Un nuevo fichero de diseño invalida cualquier mapeo ya aplicado.
+    experiment["mapping"] = None
+    experiment["long_df"] = None
+
+
+def get_experiment_design_df(session_id: str, experiment_id: str) -> pd.DataFrame | None:
+    return _get_experiment_record(session_id, experiment_id)["design_df"]

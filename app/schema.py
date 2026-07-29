@@ -16,6 +16,13 @@ opcional y su propio mapeo, y varios conjuntos conviven en la misma sesión.
   (a menudo aleatorizado entre versiones) y lo valora en una variable de
   resultado continua o de escala. Como cada fila del fichero ancho ya es una
   observación completa, no hace falta reestructurar a formato largo.
+- `ExternalDesignMappingConfig`: conjoint de elección cuyo diseño (qué
+  atributos vio cada perfil en cada tarea) no está incrustado en el fichero
+  de respuestas, sino en un fichero de diseño/plan de bloques aparte,
+  generado por la herramienta que aleatorizó el experimento. Hay que
+  cruzarlo con las respuestas por una o varias claves (p. ej. la versión
+  aleatoria asignada a cada entrevistado, y a veces también un bloque
+  geográfico o demográfico) antes de poder calcular el AMCE.
 """
 from typing import Literal
 
@@ -69,6 +76,47 @@ class VignetteMappingConfig(BaseModel):
         return [a.name for a in self.attributes]
 
 
+class DesignJoinKey(BaseModel):
+    """Une el fichero de respuestas con el de diseño por una variable de
+    contexto (p. ej. la comunidad autónoma, cuando el diseño reparte bloques
+    distintos por región). `value_map` traduce cada valor observado en la
+    columna del entrevistado al valor correspondiente en el fichero de
+    diseño (p. ej. "Comunitat Valenciana" -> "País Valencià"); los valores no
+    traducidos explícitamente caen en `default_design_value` si se indica
+    (p. ej. "Resto CCAA"), o se usan tal cual si `value_map` está vacío.
+    """
+    design_column: str = Field(min_length=1)
+    respondent_column: str = Field(min_length=1)
+    value_map: dict[str, str] = Field(default_factory=dict)
+    default_design_value: str | None = None
+
+
+class ExternalDesignAttributeMapping(BaseModel):
+    name: str = Field(min_length=1)
+    label: str = ""
+    design_column: str = Field(min_length=1)
+
+    @field_validator("label")
+    @classmethod
+    def default_label(cls, v: str, info):
+        return v or info.data.get("name", "")
+
+
+class ExternalDesignMappingConfig(BaseModel):
+    respondent_id: str | None = None
+    tasks: list[str] = Field(min_length=1)
+    profiles: list[str] = Field(min_length=2)
+    design_task_column: str = Field(min_length=1)
+    design_profile_column: str = Field(min_length=1)
+    choice_columns: dict[str, str] = Field(default_factory=dict)  # {task: columna de elección del entrevistado}
+    choice_value_map: dict[str, str] = Field(default_factory=dict)  # valor crudo -> id de perfil
+    join_keys: list[DesignJoinKey] = Field(default_factory=list)
+    attributes: list[ExternalDesignAttributeMapping] = Field(min_length=1)
+
+    def attribute_names(self) -> list[str]:
+        return [a.name for a in self.attributes]
+
+
 class AmceRequest(BaseModel):
     method: str = Field(default="ols", pattern="^(ols|clogit)$")
     attributes: list[str] | None = None  # None = todos los mapeados
@@ -90,7 +138,7 @@ class SampleFilter(BaseModel):
 
 class ExperimentCreate(BaseModel):
     name: str = Field(min_length=1)
-    kind: Literal["conjoint", "vignette"] = "conjoint"
+    kind: Literal["conjoint", "vignette", "conjoint_design"] = "conjoint"
     sample_filter: SampleFilter | None = None
 
 
