@@ -1,9 +1,8 @@
 # Cojoint Analyzer
 
 Aplicación web para analizar experimentos de elección conjunta (conjoint) y
-de viñeta sobre actitudes hacia la comunidad LGTBIQ+: detecta y mapea las
-variables de un fichero en formato ancho, reestructura a formato largo
-(tidy) cuando hace falta y estima el efecto de cada atributo —AMCE por OLS
+de viñeta: detecta y mapea las variables de un fichero en formato ancho, reestructura 
+a formato largo cuando hace falta y estima el efecto de cada atributo —AMCE por OLS
 clustered/logit condicional para elección, OLS para viñeta— con un dot plot
 exportable listo para publicación.
 
