@@ -56,6 +56,36 @@ def test_suggest_attribute_columns_finds_low_cardinality_columns(vignette_df):
     assert "gravedad" not in candidates  # recorrido continuo, no un puñado de niveles
 
 
+def test_validate_vignette_config_allows_missing_outcome_column(vignette_df):
+    """Un experimento con una batería de preguntas (no una única variable de
+    resultado) no tiene por qué mapear ninguna aquí: se valida solo, y las
+    variables de resultado se eligen luego, una por una, al estimar la
+    batería."""
+    config = VignetteMappingConfig(
+        outcome_column=None,
+        attributes=[VignetteAttributeMapping(name="texto", column="texto_version")],
+    )
+    issues = validate_vignette_config(vignette_df, config)
+    assert issues == []
+
+
+def test_vignette_mapping_config_treats_blank_outcome_as_none():
+    config = VignetteMappingConfig(
+        outcome_column="",
+        attributes=[VignetteAttributeMapping(name="texto", column="texto_version")],
+    )
+    assert config.outcome_column is None
+
+
+def test_run_vignette_ols_raises_clear_error_when_no_outcome_mapped(vignette_df):
+    config = VignetteMappingConfig(
+        outcome_column=None,
+        attributes=[VignetteAttributeMapping(name="texto", column="texto_version")],
+    )
+    with pytest.raises(ValueError, match="Estimar batería"):
+        run_vignette_ols(vignette_df, config)
+
+
 def test_validate_vignette_config_flags_missing_columns(vignette_df):
     config = VignetteMappingConfig(
         outcome_column="no_existe",

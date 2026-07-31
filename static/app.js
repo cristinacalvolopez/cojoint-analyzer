@@ -695,14 +695,14 @@
   // aparecen 4 valores distintos en la submuestra). Por eso nunca se usan
   // para restringir el selector, solo para ordenar: todas las columnas del
   // fichero siguen siendo elegibles.
-  function columnOptionsWithSuggestionsHtml(suggested, selected) {
+  function columnOptionsWithSuggestionsHtml(suggested, selected, noneLabel) {
     const suggestedSet = new Set(suggested);
     const rest = state.columns.filter((c) => !suggestedSet.has(c.name));
     const optionHtml = (c) => {
       const label = c.label && c.label !== c.name ? `${c.label} (${c.name})` : c.name;
       return `<option value="${escapeHtml(c.name)}" ${c.name === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
     };
-    let html = "";
+    let html = noneLabel ? `<option value="" ${selected ? "" : "selected"}>${escapeHtml(noneLabel)}</option>` : "";
     if (suggested.length) {
       const suggestedCols = suggested.map((name) => state.columns.find((c) => c.name === name)).filter(Boolean);
       html += `<optgroup label="Sugeridas">${suggestedCols.map(optionHtml).join("")}</optgroup>`;
@@ -1165,7 +1165,9 @@
     el("vignetteRespondentIdSelect").innerHTML = '<option value="">(usar número de fila)</option>' + columnOptionsHtml(d.respondent_id).replace('<option value="">—</option>', "");
     el("vignetteRespondentIdSelect").value = d.respondent_id || "";
 
-    el("vignetteOutcomeSelect").innerHTML = columnOptionsWithSuggestionsHtml(vs.candidateOutcomes, d.outcome_column);
+    el("vignetteOutcomeSelect").innerHTML = columnOptionsWithSuggestionsHtml(
+      vs.candidateOutcomes, d.outcome_column, '(ninguna — usaré "Estimar batería")'
+    );
 
     renderVignetteAttributeGrid();
     updateSidebarSummary();
@@ -1247,12 +1249,11 @@
     const id = state.activeExperimentId;
     const vs = currentVignetteState();
     const d = vs.draft;
-    if (!d.outcome_column) { alert("Elige una variable de resultado."); return; }
     if (!d.attributes.length) { alert("Añade al menos un atributo."); return; }
 
     const payload = {
       respondent_id: d.respondent_id || null,
-      outcome_column: d.outcome_column,
+      outcome_column: d.outcome_column || null,
       outcome_label: d.outcome_label || "",
       attributes: d.attributes.map((a) => ({ name: a.name, label: a.label || a.name, column: a.column })),
     };
@@ -2096,6 +2097,16 @@
 
     if (!mapped || !attributes.length) {
       el("amceEmpty").hidden = false;
+      el("amceEmpty").textContent = "Completa el paso anterior antes de estimar el modelo.";
+      el("amceContent").hidden = true;
+      return;
+    }
+    // Una viñeta puede no tener una única variable de resultado (una
+    // batería de preguntas en su lugar): no hay nada que estimar aquí, hay
+    // que ir al paso "Tablas comparativas" y usar "Estimar batería".
+    if (!isChoiceLikeKind(exp.kind) && !cs.draft.outcome_column) {
+      el("amceEmpty").hidden = false;
+      el("amceEmpty").textContent = 'Este conjunto no tiene una única variable de resultado mapeada. Ve al paso "4 · Tablas comparativas" y usa "Estimar batería" para estimar cada variable de la batería.';
       el("amceContent").hidden = true;
       return;
     }

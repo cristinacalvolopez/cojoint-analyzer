@@ -330,7 +330,7 @@ async def apply_vignette(session_id: str, experiment_id: str, payload: VignetteM
 
     n_valid = 0
     cols = [payload.outcome_column, *[a.column for a in payload.attributes]]
-    cols = [c for c in cols if c in df.columns]
+    cols = [c for c in cols if c and c in df.columns]
     if cols:
         n_valid = int(df[cols].dropna().shape[0])
 
@@ -343,7 +343,7 @@ async def vignette_preview(session_id: str, experiment_id: str, limit: int = 50)
     df = _get_long_df_or_400(session_id, experiment_id)
     mapping_config = store.get_experiment_mapping(session_id, experiment_id)
     cols = [mapping_config.outcome_column, *[a.column for a in mapping_config.attributes]]
-    cols = [c for c in cols if c in df.columns]
+    cols = [c for c in cols if c and c in df.columns]
     preview = df[cols].head(limit).copy()
     preview = preview.astype(object).where(preview.notna(), None)
     return {"rows": preview.to_dict(orient="records"), "n_total": int(len(df))}
@@ -355,7 +355,7 @@ async def download_vignette(session_id: str, experiment_id: str, format: str = "
     df = _get_long_df_or_400(session_id, experiment_id)
     mapping_config = store.get_experiment_mapping(session_id, experiment_id)
     cols = [mapping_config.outcome_column, *[a.column for a in mapping_config.attributes]]
-    cols = [c for c in cols if c in df.columns]
+    cols = [c for c in cols if c and c in df.columns]
     return _download_response(df[cols], format, "vineta_datos")
 
 

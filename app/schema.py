@@ -67,10 +67,20 @@ class VignetteAttributeMapping(BaseModel):
 
 
 class VignetteMappingConfig(BaseModel):
+    # `outcome_column` es opcional: algunos experimentos de viñeta no tienen
+    # una única variable de resultado sino una batería de preguntas sobre el
+    # mismo estímulo (p. ej. una noticia con varias preguntas de opinión
+    # detrás). Si no se mapea aquí, el paso "3 · Estimación" no tiene nada
+    # que estimar y hay que usar "Estimar batería" en "Tablas comparativas".
     respondent_id: str | None = None
-    outcome_column: str = Field(min_length=1)
+    outcome_column: str | None = None
     outcome_label: str = ""
     attributes: list[VignetteAttributeMapping] = Field(min_length=1)
+
+    @field_validator("outcome_column")
+    @classmethod
+    def blank_to_none(cls, v: str | None) -> str | None:
+        return v or None
 
     def attribute_names(self) -> list[str]:
         return [a.name for a in self.attributes]

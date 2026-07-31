@@ -101,6 +101,41 @@ def test_crosstab_requires_mapping_applied_first(client):
     assert r.status_code == 400
 
 
+def test_vignette_can_be_mapped_and_used_for_battery_without_a_single_outcome(client):
+    """Un experimento sin una única variable de resultado (una batería de
+    preguntas sobre el mismo estímulo) debe poder aplicar su mapeo dejando
+    la variable de resultado sin elegir, y usar directamente "Estimar
+    batería" — no debe hacer falta nominar una variable arbitraria solo
+    para poder avanzar."""
+    content = _make_vignette_csv()
+    r = client.post("/api/upload", files={"file": ("vinieta.csv", content, "text/csv")})
+    session_id = r.json()["session_id"]
+    r = client.post(f"/api/experiments/{session_id}", json={"name": "Viñeta", "kind": "vignette"})
+    experiment_id = r.json()["id"]
+
+    apply_payload = {
+        "outcome_column": None,
+        "attributes": [{"name": "texto", "label": "Texto mostrado", "column": "texto_mostrado"}],
+    }
+    r = client.post(f"/api/vignette/{session_id}/{experiment_id}/apply", json=apply_payload)
+    assert r.status_code == 200, r.text
+    assert r.json()["issues"] == []
+
+    # El paso de estimación única no tiene nada que estimar y debe fallar
+    # con un mensaje claro que señale a "Estimar batería"...
+    r = client.post(f"/api/vignette/{session_id}/{experiment_id}/estimate", json={})
+    assert r.status_code == 400
+    assert "Estimar batería" in r.json()["detail"]
+
+    # ...pero la batería en sí funciona con normalidad.
+    r = client.post(
+        f"/api/vignette/{session_id}/{experiment_id}/battery",
+        json={"outcome_columns": ["gravedad", "justicia"]},
+    )
+    assert r.status_code == 200, r.text
+    assert {res["outcome_column"] for res in r.json()["results"]} == {"gravedad", "justicia"}
+
+
 def test_battery_estimates_each_outcome_against_the_mapped_attribute(client):
     session_id, experiment_id = _upload_and_map_vignette(client)
 

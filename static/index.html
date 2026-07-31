@@ -159,9 +159,13 @@
           <div class="card">
             <h3>Estructura de la viñeta</h3>
             <p class="text-secondary" style="font-size:12.5px;margin-bottom:14px">
-              Cada entrevistado ve un único perfil o estímulo (a veces aleatorizado entre versiones) y lo
-              valora en una variable de resultado. No hay perfiles enfrentados, así que no hace falta
-              reestructurar: cada fila del fichero ya es una observación.
+              Cada entrevistado ve un único perfil o estímulo (a veces aleatorizado entre versiones). No hay
+              perfiles enfrentados, así que no hace falta reestructurar: cada fila del fichero ya es una
+              observación. Si el estímulo se valora en <strong>una</strong> variable de resultado, selecciónala
+              abajo para poder estimarla directamente en "3 · Estimación". Si en cambio hay una
+              <strong>batería de varias preguntas</strong> sobre el mismo estímulo (no una sola), deja esto sin
+              seleccionar: en "4 · Tablas comparativas" podrás elegir todas las que quieras y compararlas de una
+              vez con "Estimar batería".
             </p>
             <div class="mapping-toolbar">
               <label class="field">
@@ -169,8 +173,8 @@
                 <select id="vignetteRespondentIdSelect"><option value="">(usar número de fila)</option></select>
               </label>
               <label class="field">
-                <span>Variable de resultado</span>
-                <select id="vignetteOutcomeSelect"><option value="">—</option></select>
+                <span>Variable de resultado (opcional)</span>
+                <select id="vignetteOutcomeSelect"><option value="">(ninguna — usaré "Estimar batería")</option></select>
               </label>
             </div>
           </div>

@@ -95,14 +95,15 @@ def validate_vignette_config(df: pd.DataFrame, config: VignetteMappingConfig) ->
     if config.respondent_id is not None and config.respondent_id not in df.columns:
         issues.append(f'La columna de identificador "{config.respondent_id}" no existe en el fichero.')
 
-    if config.outcome_column not in df.columns:
-        issues.append(f'La columna de resultado "{config.outcome_column}" no existe en el fichero.')
-    else:
-        n_numeric = coerce_scale_numeric(df[config.outcome_column]).notna().sum()
-        if n_numeric == 0:
-            issues.append(
-                f'La columna de resultado "{config.outcome_column}" no tiene ningún valor numérico.'
-            )
+    if config.outcome_column is not None:
+        if config.outcome_column not in df.columns:
+            issues.append(f'La columna de resultado "{config.outcome_column}" no existe en el fichero.')
+        else:
+            n_numeric = coerce_scale_numeric(df[config.outcome_column]).notna().sum()
+            if n_numeric == 0:
+                issues.append(
+                    f'La columna de resultado "{config.outcome_column}" no tiene ningún valor numérico.'
+                )
 
     for attr in config.attributes:
         if attr.column not in df.columns:
@@ -112,6 +113,11 @@ def validate_vignette_config(df: pd.DataFrame, config: VignetteMappingConfig) ->
 
 
 def run_vignette_ols(df: pd.DataFrame, config: VignetteMappingConfig, baselines: dict[str, str] | None = None) -> dict:
+    if config.outcome_column is None:
+        raise ValueError(
+            'Este conjunto no tiene una única variable de resultado mapeada. Ve al paso '
+            '"Tablas comparativas" y usa "Estimar batería" para estimar cada variable de la batería.'
+        )
     baselines = baselines or {}
     attributes = config.attribute_names()
     column_by_attr = {a.name: a.column for a in config.attributes}
