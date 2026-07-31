@@ -58,7 +58,14 @@ def _upload_respondent(client) -> dict:
     content = _make_respondent_csv()
     r = client.post("/api/upload", files={"file": ("respuestas.csv", content, "text/csv")})
     assert r.status_code == 200, r.text
-    return r.json()
+    data = r.json()
+    # Subir el fichero ya no crea ningún conjunto por defecto: se crea uno de
+    # elección aquí mismo, para no tocar el resto de este fichero de tests
+    # (solo test_apply_design_mapping_rejects_wrong_kind lo necesita).
+    r = client.post(f"/api/experiments/{data['session_id']}", json={"name": "Conjunto 1", "kind": "conjoint"})
+    assert r.status_code == 200, r.text
+    data["default_experiment_id"] = r.json()["id"]
+    return data
 
 
 def _create_design_experiment(client, session_id) -> str:

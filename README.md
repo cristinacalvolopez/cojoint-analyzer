@@ -260,6 +260,8 @@ cojoint-analyzer/
 │   └── test_api.py        # integración: varios conjuntos por sesión, filtro, viñeta, descargas
 ├── sample_data/
 │   └── generate_sample.py # genera un CSV ancho de ejemplo (300 x 8 tareas x 2 perfiles)
+├── launcher.py             # arranque para la app de macOS (servidor + abrir navegador)
+├── CojointAnalyzer.spec    # receta de PyInstaller para generar el .app
 ├── requirements.txt
 ├── requirements-dev.txt   # + pytest/httpx, para correr la suite de tests
 └── .gitignore
@@ -282,10 +284,14 @@ uvicorn app.main:app --reload
 
 Abre [http://localhost:8000](http://localhost:8000) y sube
 `sample_data/conjoint_sample_wide.csv` (o tu `.dta`/`.sav`/`.xlsx` real)
-para probar el flujo completo. Al subir el archivo se crea un primer
-conjunto de tipo elección con la sugerencia ya aplicada; usa el botón "+"
-del panel "Conjuntos" para añadir más (p. ej. una viñeta, o el mismo tipo
-filtrado a otra submuestra).
+para probar el flujo completo. Subir el archivo no crea ningún conjunto
+todavía: antes de nada hay que elegir el tipo del primero (elección,
+viñeta, o elección con diseño externo); usa el botón "+" del panel
+"Conjuntos" para añadir más (p. ej. una viñeta, o el mismo tipo filtrado
+a otra submuestra). El botón "Guardar configuración" del mismo panel
+descarga un JSON con el tipo/filtro/mapeo de todos los conjuntos de la
+sesión, para reimportarlo más tarde (volviendo a subir el mismo fichero
+de datos) y seguir trabajando sin rehacer el mapeo a mano.
 
 ### Tests
 
@@ -309,3 +315,26 @@ duplicar/eliminar) con el `TestClient` de FastAPI.
 - Límite de subida: 50 MB por archivo (`MAX_UPLOAD_BYTES` en `app/main.py`).
 - Para producción, ejecuta detrás de un proceso manager (`uvicorn` con
   `--workers`, o un servicio systemd/Docker) y sin `--reload`.
+
+### App de macOS (doble clic, sin terminal)
+
+`launcher.py` arranca el servidor local y abre el navegador por defecto;
+`CojointAnalyzer.spec` empaqueta eso con PyInstaller como una app de
+verdad (`.app`), pensada para compartir con alguien que no tenga Python
+instalado. Los datos nunca salen del ordenador: sigue siendo el mismo
+servidor local en memoria, solo que sin necesidad de abrir una terminal.
+
+```bash
+source .venv/bin/activate
+pip install pyinstaller
+pyinstaller --noconfirm CojointAnalyzer.spec
+```
+
+Genera `dist/Cojoint Analyzer.app`. Solo funciona en Mac con el mismo
+tipo de chip que el ordenador donde se compila (Apple Silicon o Intel,
+no hay compilación cruzada); para repartirla a alguien, comprime el
+`.app` en un `.zip` antes de mandarlo (si no, macOS puede corromper los
+permisos del ejecutable al copiarlo). Al no estar firmada con una cuenta
+de Apple Developer, macOS avisará la primera vez que se abra: hay que
+hacer clic derecho → "Abrir" (en vez de doble clic) para confirmar que
+se quiere ejecutar de todas formas.

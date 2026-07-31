@@ -64,6 +64,73 @@
   });
   initTheme();
 
+  // ---------- Colores personalizables del gráfico de estimación ----------
+  // --chart-sig/--chart-nonsig/--chart-baseline son variables CSS propias
+  // (no --good/--critical/--text-muted, que se usan en el resto de la
+  // interfaz): así, cambiarlas aquí solo afecta al dot plot, la tabla de
+  // coeficientes y sus exportaciones, sin recolorear el resto de la app.
+  // Al ser variables CSS, todo lo que ya las usa (SVG y tabla en pantalla)
+  // se repinta solo al cambiarlas — no hace falta volver a renderizar nada.
+  const CHART_COLOR_VARS = { sig: "--chart-sig", nonsig: "--chart-nonsig", baseline: "--chart-baseline" };
+  const CHART_COLORS_STORAGE_KEY = "cojoint-chart-colors";
+
+  function readSavedChartColors() {
+    try {
+      return JSON.parse(localStorage.getItem(CHART_COLORS_STORAGE_KEY) || "{}");
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function loadChartColors() {
+    const saved = readSavedChartColors();
+    for (const [key, cssVarName] of Object.entries(CHART_COLOR_VARS)) {
+      if (saved[key]) document.documentElement.style.setProperty(cssVarName, saved[key]);
+    }
+  }
+
+  function setChartColor(key, value) {
+    document.documentElement.style.setProperty(CHART_COLOR_VARS[key], value);
+    const saved = readSavedChartColors();
+    saved[key] = value;
+    localStorage.setItem(CHART_COLORS_STORAGE_KEY, JSON.stringify(saved));
+  }
+
+  function resetChartColors() {
+    for (const cssVarName of Object.values(CHART_COLOR_VARS)) {
+      document.documentElement.style.removeProperty(cssVarName);
+    }
+    localStorage.removeItem(CHART_COLORS_STORAGE_KEY);
+  }
+
+  function cssColorToHex(cssColor) {
+    const ctx = document.createElement("canvas").getContext("2d");
+    ctx.fillStyle = "#000000";
+    ctx.fillStyle = cssColor;
+    return ctx.fillStyle;
+  }
+
+  loadChartColors();
+
+  document.querySelectorAll("#chartColorLegend [data-color-key]").forEach((item) => {
+    item.addEventListener("click", () => {
+      const key = item.dataset.colorKey;
+      const current = getComputedStyle(document.documentElement).getPropertyValue(CHART_COLOR_VARS[key]).trim();
+      const input = document.createElement("input");
+      input.type = "color";
+      input.value = cssColorToHex(current);
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      input.style.pointerEvents = "none";
+      document.body.appendChild(input);
+      input.addEventListener("input", () => setChartColor(key, input.value));
+      input.addEventListener("change", () => input.remove());
+      input.click();
+    });
+  });
+
+  el("resetChartColorsBtn").addEventListener("click", resetChartColors);
+
   // ---------- Modal ----------
   const modalOverlay = el("modalOverlay");
   const modalBody = el("modalBody");
@@ -298,18 +365,189 @@
       state.experimentOrder.push(e.id);
     }
 
-    // La sugerencia del conjunto por defecto ya viene en la respuesta de subida:
-    // nos ahorramos un round-trip para el caso más común (un solo experimento).
-    const defaultId = data.default_experiment_id;
-    state.conjoint[defaultId] = buildConjointStateFromSuggestion(data.suggested_mapping);
-
     el("fileMeta").textContent = `${data.filename} · ${data.n_rows.toLocaleString("es-ES")} filas · ${data.n_cols} variables`;
     el("resetBtn").hidden = false;
     el("uploadScreen").hidden = true;
     el("appScreen").hidden = false;
 
-    await selectExperiment(defaultId);
+    renderExperimentsList();
+    // Subir el fichero ya no crea ningún conjunto por defecto: antes de nada
+    // hay que elegir el tipo del primero (ver #noExperimentsState).
+    if (state.experimentOrder.length) {
+      await selectExperiment(state.experimentOrder[0]);
+    } else {
+      showNoExperimentsState();
+    }
   }
+
+  function showNoExperimentsState() {
+    el("noExperimentsState").hidden = false;
+    el("tabs").hidden = true;
+    el("sampleFilterCard").hidden = true;
+    document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("is-active"));
+    el("stepper").innerHTML = "";
+  }
+
+  function hideNoExperimentsState() {
+    el("noExperimentsState").hidden = true;
+    el("tabs").hidden = false;
+    el("sampleFilterCard").hidden = false;
+  }
+
+  async function createExperimentAndSelect(name, kind) {
+    const exp = await postJson(`/api/experiments/${state.sessionId}`, { name, kind });
+    state.experiments[exp.id] = exp;
+    state.experimentOrder.push(exp.id);
+    renderExperimentsList();
+    hideNoExperimentsState();
+    await selectExperiment(exp.id);
+    return exp;
+  }
+
+  el("createFirstExpBtn").addEventListener("click", async () => {
+    const name = el("firstExpName").value.trim() || "Conjunto 1";
+    const kind = document.querySelector('input[name="firstExpKind"]:checked').value;
+    try {
+      await createExperimentAndSelect(name, kind);
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+
+  // =====================================================================
+  // Guardar / reimportar la configuración de los conjuntos de la sesión
+  // =====================================================================
+
+  el("saveConfigBtn").addEventListener("click", async () => {
+    try {
+      const config = await getJson(`/api/session/${state.sessionId}/config`);
+      const blob = new Blob([JSON.stringify(config, null, 2)], { type: "application/json" });
+      const stem = (state.filename || "config").replace(/\.[^.]+$/, "");
+      downloadBlob(blob, `${stem}_configuracion.json`);
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+
+  async function importSessionConfig(file) {
+    let config;
+    try {
+      config = JSON.parse(await file.text());
+    } catch (e) {
+      alert("El fichero de configuración no es un JSON válido.");
+      return;
+    }
+    if (!Array.isArray(config.experiments)) {
+      alert('El fichero no tiene el formato esperado (falta "experiments").');
+      return;
+    }
+
+    let restored = 0;
+    const pendingDesign = [];
+    const failed = [];
+    for (const spec of config.experiments) {
+      try {
+        const exp = await postJson(`/api/experiments/${state.sessionId}`, {
+          name: spec.name, kind: spec.kind, sample_filter: spec.sample_filter || null,
+        });
+        state.experiments[exp.id] = exp;
+        state.experimentOrder.push(exp.id);
+
+        if (spec.mapping && spec.kind === "conjoint") {
+          const applyResult = await postJson(`/api/mapping/${state.sessionId}/${exp.id}/apply`, spec.mapping);
+          const preview = await getJson(`/api/reshape/${state.sessionId}/${exp.id}/preview?limit=50`);
+          // Construimos el estado local completo directamente a partir del
+          // mapeo importado (no de una sugerencia en blanco): si no,
+          // ensureConjointState() lo pisaría con una sugerencia nueva sin
+          // "reshapeSummary", dejando el paso 2/3 bloqueados aunque el
+          // backend ya tuviera el mapeo aplicado (bug reportado por Cristina).
+          state.conjoint[exp.id] = {
+            draft: {
+              respondent_id: spec.mapping.respondent_id,
+              tasks: [...spec.mapping.tasks],
+              profiles: [...spec.mapping.profiles],
+              attributes: spec.mapping.attributes.map((a) => ({ name: a.name, label: a.label || a.name, columns: a.columns })),
+              choice_columns: { ...spec.mapping.choice_columns },
+              choice_value_map: { ...spec.mapping.choice_value_map },
+            },
+            unmatchedColumns: [],
+            unmatchedChoiceValues: [],
+            candidateTasks: [],
+            candidateProfiles: [],
+            reshapeSummary: applyResult.summary,
+            reshapePreview: preview,
+            amceResult: null,
+            amceMethod: "ols",
+            choiceValueOptions: {},
+            choiceTablesResult: null,
+          };
+          state.experiments[exp.id].is_mapped = true;
+          restored++;
+        } else if (spec.mapping && spec.kind === "vignette") {
+          const applyResult = await postJson(`/api/vignette/${state.sessionId}/${exp.id}/apply`, spec.mapping);
+          const [preview, suggestion] = await Promise.all([
+            getJson(`/api/vignette/${state.sessionId}/${exp.id}/preview?limit=50`),
+            getJson(`/api/vignette/${state.sessionId}/${exp.id}/suggest`),
+          ]);
+          state.vignette[exp.id] = {
+            candidateOutcomes: suggestion.candidate_outcome_columns,
+            candidateAttributes: suggestion.candidate_attribute_columns,
+            draft: {
+              respondent_id: spec.mapping.respondent_id,
+              outcome_column: spec.mapping.outcome_column,
+              outcome_label: spec.mapping.outcome_label || "",
+              attributes: spec.mapping.attributes.map((a) => ({ name: a.name, label: a.label || a.name, column: a.column })),
+            },
+            summary: applyResult.summary,
+            preview,
+            amceResult: null,
+            tablesSelectedColumns: [],
+            tablesResult: null,
+            batteryResult: null,
+            multiResponseItems: [{ column: "", label: "" }],
+            multiResponseGroupAttribute: "",
+            multiResponseResult: null,
+          };
+          state.experiments[exp.id].is_mapped = true;
+          restored++;
+        } else if (spec.kind === "conjoint_design" && spec.mapping) {
+          // El mapeo de un conjunto con diseño externo depende del fichero
+          // de diseño (no incluido en esta configuración): se guarda solo
+          // como referencia, hay que volver a subir el fichero y rehacer
+          // este paso a mano.
+          pendingDesign.push(`"${spec.name}" (fichero de diseño: ${spec.design_filename || "sin nombre guardado"})`);
+        }
+      } catch (err) {
+        failed.push(`"${spec.name}": ${err.message}`);
+      }
+    }
+
+    renderExperimentsList();
+    hideNoExperimentsState();
+    if (state.experimentOrder.length) {
+      await selectExperiment(state.experimentOrder[state.experimentOrder.length - 1]);
+    }
+
+    let msg = `${restored} conjunto(s) restaurado(s) con su mapeo aplicado.`;
+    if (pendingDesign.length) {
+      msg += `\n\nEstos conjuntos son de tipo "elección con diseño externo" y necesitan que vuelvas a subir su fichero de diseño y rehagas el mapeo (no se puede reaplicar solo con este archivo): ${pendingDesign.join(", ")}.`;
+    }
+    if (failed.length) {
+      msg += `\n\nNo se pudieron restaurar: ${failed.join("; ")}.`;
+    }
+    alert(msg);
+  }
+
+  el("importConfigInput").addEventListener("change", () => {
+    const file = el("importConfigInput").files[0];
+    if (file) importSessionConfig(file);
+    el("importConfigInput").value = "";
+  });
+  el("importConfigInputFirst").addEventListener("change", () => {
+    const file = el("importConfigInputFirst").files[0];
+    if (file) importSessionConfig(file);
+    el("importConfigInputFirst").value = "";
+  });
 
   el("resetBtn").addEventListener("click", async () => {
     if (state.sessionId) {
@@ -381,12 +619,8 @@
       }
       const kind = el("newExpKind").value;
       try {
-        const exp = await postJson(`/api/experiments/${state.sessionId}`, { name, kind });
-        state.experiments[exp.id] = exp;
-        state.experimentOrder.push(exp.id);
+        await createExperimentAndSelect(name, kind);
         closeModal();
-        renderExperimentsList();
-        await selectExperiment(exp.id);
       } catch (err) {
         el("newExpError").hidden = false;
         el("newExpError").textContent = err.message;
@@ -455,10 +689,6 @@
 
   function deleteExperimentFlow(id) {
     const exp = state.experiments[id];
-    if (state.experimentOrder.length <= 1) {
-      alert("No puedes eliminar el único conjunto de la sesión.");
-      return;
-    }
     openModal(`
       <div class="modal-header"><h3>Eliminar conjunto</h3><button class="modal-close" aria-label="Cerrar">&times;</button></div>
       <div class="modal-body">
@@ -477,10 +707,14 @@
       delete state.design[id];
       state.experimentOrder = state.experimentOrder.filter((x) => x !== id);
       closeModal();
+      renderExperimentsList();
       if (state.activeExperimentId === id) {
-        await selectExperiment(state.experimentOrder[0]);
-      } else {
-        renderExperimentsList();
+        if (state.experimentOrder.length) {
+          await selectExperiment(state.experimentOrder[0]);
+        } else {
+          state.activeExperimentId = null;
+          showNoExperimentsState();
+        }
       }
     });
   }
@@ -501,12 +735,15 @@
     el("vignetteMappingPanel").hidden = exp.kind !== "vignette";
     el("designMappingPanel").hidden = exp.kind !== "conjoint_design";
     el("amceMethodField").hidden = exp.kind === "vignette";
+    el("choiceTablesPanel").hidden = !isChoiceLikeKind(exp.kind);
+    el("vignetteTablesPanel").hidden = exp.kind !== "vignette";
 
     if (exp.kind === "conjoint") {
       await ensureConjointState(id);
       renderMappingStep();
       renderReshapeStepForActive();
       renderAmceStepForActive();
+      renderChoiceTablesStep();
     } else if (exp.kind === "vignette") {
       await ensureVignetteState(id);
       renderVignetteMappingStep();
@@ -518,6 +755,7 @@
       renderDesignMappingStep();
       renderReshapeStepForActive();
       renderAmceStepForActive();
+      renderChoiceTablesStep();
     }
     goToStep("mapping");
   }
@@ -600,14 +838,14 @@
   // =====================================================================
 
   const STEPS_BY_KIND = {
-    conjoint: ["mapping", "reshape", "amce"],
+    conjoint: ["mapping", "reshape", "amce", "tables"],
     vignette: ["mapping", "reshape", "amce", "tables"],
-    conjoint_design: ["mapping", "reshape", "amce"],
+    conjoint_design: ["mapping", "reshape", "amce", "tables"],
   };
   const STEP_LABELS = {
-    conjoint: { mapping: "Mapeo de variables", reshape: "Reestructuración", amce: "Estimación AMCE" },
+    conjoint: { mapping: "Mapeo de variables", reshape: "Reestructuración", amce: "Estimación AMCE", tables: "Tablas comparativas" },
     vignette: { mapping: "Mapeo de variables", reshape: "Vista previa", amce: "Estimación", tables: "Tablas comparativas" },
-    conjoint_design: { mapping: "Mapeo y cruce del diseño", reshape: "Reestructuración", amce: "Estimación AMCE" },
+    conjoint_design: { mapping: "Mapeo y cruce del diseño", reshape: "Reestructuración", amce: "Estimación AMCE", tables: "Tablas comparativas" },
   };
   let currentStep = "mapping";
 
@@ -680,6 +918,7 @@
       amceResult: null,
       amceMethod: "ols",
       choiceValueOptions: {},
+      choiceTablesResult: null,
     };
   }
 
@@ -1411,6 +1650,43 @@
     </div>`;
   }
 
+  // ---------- Tablas comparativas para conjuntos de elección (con o sin diseño externo) ----------
+  // A diferencia de la viñeta, aquí no hay que elegir variables: el único
+  // "resultado" con sentido es la propia elección (chosen), así que la
+  // tabla se genera directamente contra cada atributo ya mapeado.
+
+  function renderChoiceTablesStep() {
+    const cs = currentAmceCapableState();
+    if (cs.choiceTablesResult) {
+      renderChoiceTablesResult(cs.choiceTablesResult);
+    } else {
+      el("choiceTablesResultEmpty").hidden = false;
+      el("choiceTablesResultEmpty").textContent = 'Pulsa "Generar tabla".';
+      el("choiceTablesResult").hidden = true;
+      el("choiceTablesResult").innerHTML = "";
+    }
+  }
+
+  el("generateChoiceTablesBtn").addEventListener("click", async () => {
+    const cs = currentAmceCapableState();
+    if (!cs.reshapeSummary) { alert('Aplica primero el mapeo en el paso "Mapeo de variables".'); return; }
+    try {
+      const result = await getJson(`/api/amce/${state.sessionId}/${state.activeExperimentId}/crosstab`);
+      cs.choiceTablesResult = result;
+      renderChoiceTablesResult(result);
+    } catch (err) {
+      el("choiceTablesResultEmpty").hidden = false;
+      el("choiceTablesResultEmpty").textContent = err.message;
+      el("choiceTablesResult").hidden = true;
+    }
+  });
+
+  function renderChoiceTablesResult(result) {
+    el("choiceTablesResultEmpty").hidden = true;
+    el("choiceTablesResult").hidden = false;
+    el("choiceTablesResult").innerHTML = result.tables.map((t) => renderCrosstabCard(t)).join("");
+  }
+
   el("runBatteryBtn").addEventListener("click", async () => {
     const vs = currentVignetteState();
     if (!vs.summary) { alert('Aplica primero el mapeo en el paso "Mapeo de variables".'); return; }
@@ -1456,9 +1732,9 @@
         </div>
         <div id="batteryDotplot-${i}" class="dotplot-wrap"></div>
         <div class="legend">
-          <span class="legend__item"><span class="legend__swatch" style="background:var(--good)"></span>Significativo al 95%</span>
-          <span class="legend__item"><span class="legend__swatch" style="background:var(--critical)"></span>No significativo</span>
-          <span class="legend__item"><span class="legend__swatch" style="background:var(--text-muted)"></span>Nivel de referencia</span>
+          <span class="legend__item"><span class="legend__swatch" style="background:var(--chart-sig)"></span>Significativo al 95%</span>
+          <span class="legend__item"><span class="legend__swatch" style="background:var(--chart-nonsig)"></span>No significativo</span>
+          <span class="legend__item"><span class="legend__swatch" style="background:var(--chart-baseline)"></span>Nivel de referencia</span>
         </div>
         <div class="table-scroll" style="margin-top:14px">
           <table>
@@ -1660,6 +1936,7 @@
       reshapePreview: null,
       amceResult: null,
       amceMethod: "ols",
+      choiceTablesResult: null,
     };
   }
 
@@ -2085,8 +2362,11 @@
   }
 
   function resetAmceStep() {
-    currentAmceCapableState().amceResult = null;
+    const cs = currentAmceCapableState();
+    cs.amceResult = null;
+    if ("choiceTablesResult" in cs) cs.choiceTablesResult = null;
     renderAmceStepForActive();
+    if (isChoiceLikeKind(activeExperiment().kind)) renderChoiceTablesStep();
   }
 
   function renderAmceStepForActive() {
@@ -2357,8 +2637,9 @@
     const palette = {
       gridline: cssVar("--gridline"),
       baseline: cssVar("--baseline"),
-      good: cssVar("--good"),
-      critical: cssVar("--critical"),
+      chartSig: cssVar("--chart-sig"),
+      chartNonsig: cssVar("--chart-nonsig"),
+      chartBaseline: cssVar("--chart-baseline"),
       textPrimary: cssVar("--text-primary"),
       textSecondary: cssVar("--text-secondary"),
       textMuted: cssVar("--text-muted"),
@@ -2370,13 +2651,13 @@
       n.setAttribute("stroke", palette.baseline);
       n.setAttribute("stroke-width", "1.5");
     });
-    const sigColor = (n) => (n.classList.contains("is-sig") ? palette.good : n.classList.contains("is-nonsig") ? palette.critical : palette.textMuted);
+    const sigColor = (n) => (n.classList.contains("is-sig") ? palette.chartSig : n.classList.contains("is-nonsig") ? palette.chartNonsig : palette.chartBaseline);
     clone.querySelectorAll(".dotplot__ci").forEach((n) => {
       n.setAttribute("stroke", sigColor(n));
       n.setAttribute("stroke-width", "1.6");
     });
     clone.querySelectorAll(".dotplot__point").forEach((n) => {
-      n.setAttribute("fill", n.classList.contains("is-baseline") ? palette.textMuted : sigColor(n));
+      n.setAttribute("fill", n.classList.contains("is-baseline") ? palette.chartBaseline : sigColor(n));
     });
     clone.querySelectorAll(".dotplot__attr-label").forEach((n) => {
       n.setAttribute("fill", palette.textSecondary);
@@ -2472,7 +2753,7 @@
     const palette = {
       textPrimary: cssVar("--text-primary"),
       textMuted: cssVar("--text-muted"),
-      good: cssVar("--good"),
+      good: cssVar("--chart-sig"),
       gridline: cssVar("--gridline"),
       baseline: cssVar("--baseline"),
       surfaceRaised: cssVar("--surface-raised"),

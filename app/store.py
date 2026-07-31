@@ -60,6 +60,10 @@ def get_labels(session_id: str) -> dict[str, str]:
     return _get_record(session_id)["labels"]
 
 
+def get_filename(session_id: str) -> str:
+    return _get_record(session_id)["filename"]
+
+
 def delete_session(session_id: str) -> None:
     _SESSIONS.pop(session_id, None)
 
@@ -120,6 +124,13 @@ def _experiment_summary_dict(e: dict) -> dict:
 def list_experiments(session_id: str) -> list[dict]:
     session = _get_record(session_id)
     return [_experiment_summary_dict(e) for e in session["experiments"].values()]
+
+
+def list_experiment_records(session_id: str) -> list[dict]:
+    """Los registros crudos (con el `mapping` ya resuelto a su modelo
+    pydantic, no un resumen), para exportar la configuración completa de la
+    sesión — ver `GET /api/session/{session_id}/config`."""
+    return list(_get_record(session_id)["experiments"].values())
 
 
 def get_experiment_summary(session_id: str, experiment_id: str) -> dict:

@@ -58,19 +58,41 @@ def _make_mixed_csv() -> bytes:
 
 
 def _upload_mixed(client):
+    """Sube el fichero y crea un conjunto de elección por defecto (llamado
+    "Conjunto 1", igual que hacía antes el propio backend en automático):
+    la mayoría de estos tests no les importa cómo se creó ese primer
+    conjunto, solo tener uno con el que trabajar."""
     content = _make_mixed_csv()
     r = client.post("/api/upload", files={"file": ("mixto.csv", content, "text/csv")})
     assert r.status_code == 200, r.text
-    return r.json()
+    data = r.json()
+    r = client.post(f"/api/experiments/{data['session_id']}", json={"name": "Conjunto 1", "kind": "conjoint"})
+    assert r.status_code == 200, r.text
+    data["default_experiment_id"] = r.json()["id"]
+    data["experiments"] = [r.json()]
+    return data
 
 
-def test_upload_creates_a_default_conjoint_experiment(client):
-    data = _upload_mixed(client)
-    assert len(data["experiments"]) == 1
-    assert data["experiments"][0]["kind"] == "conjoint"
-    assert data["default_experiment_id"] == data["experiments"][0]["id"]
-    # El conjoint por defecto detecta cj1 aunque haya filas de la otra submuestra sin rellenar.
-    assert data["suggested_mapping"]["tasks"] == ["cj1"]
+def test_upload_creates_no_experiments_until_the_user_chooses_a_kind(client):
+    """Antes se creaba en silencio un conjunto "de elección" por defecto al
+    subir el fichero, lo que confundía cuando el primer experimento del
+    fichero era en realidad una viñeta. Ahora subir el fichero no crea
+    ningún conjunto: el primer paso es que el usuario elija el tipo."""
+    content = _make_mixed_csv()
+    r = client.post("/api/upload", files={"file": ("mixto.csv", content, "text/csv")})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["experiments"] == []
+    assert "default_experiment_id" not in data
+
+    r = client.post(f"/api/experiments/{data['session_id']}", json={"name": "Conjunto 1", "kind": "conjoint"})
+    assert r.status_code == 200, r.text
+    conjoint_id = r.json()["id"]
+    assert r.json()["kind"] == "conjoint"
+
+    # El conjoint recién creado detecta cj1 aunque haya filas de la otra submuestra sin rellenar.
+    r = client.get(f"/api/mapping/{data['session_id']}/{conjoint_id}/suggest")
+    assert r.json()["tasks"] == ["cj1"]
 
 
 def test_can_add_a_second_vignette_experiment_alongside_the_conjoint(client):
@@ -240,6 +262,87 @@ def test_apply_mapping_summary_includes_unmapped_choice_classification(client):
     result = _apply_default_conjoint_mapping(client, session_id, conjoint_id)
     assert "unmapped_choice_values" in result["summary"]
     assert result["summary"]["unmapped_choice_values"] == {"missing_like": [], "unrecognized": []}
+
+
+def test_export_session_config_includes_kind_filter_and_applied_mapping(client):
+    """La configuración exportada debe bastar para recrear cada conjunto
+    (crear + aplicar filtro + reaplicar el mapeo) con solo volver a subir el
+    mismo fichero de datos — sin este export, habría que rehacer a mano
+    cada tarea/perfil/atributo tras reiniciar la sesión."""
+    data = _upload_mixed(client)
+    session_id = data["session_id"]
+    conjoint_id = data["default_experiment_id"]
+    client.patch(
+        f"/api/experiments/{session_id}/{conjoint_id}",
+        json={"sample_filter": {"column": "EXPERIMENTO", "values": ["1"]}},
+    )
+    _apply_default_conjoint_mapping(client, session_id, conjoint_id)
+
+    r = client.post(f"/api/experiments/{session_id}", json={"name": "Viñeta gravedad", "kind": "vignette"})
+    vignette_id = r.json()["id"]
+    client.patch(
+        f"/api/experiments/{session_id}/{vignette_id}",
+        json={"sample_filter": {"column": "EXPERIMENTO", "values": ["2"]}},
+    )
+    client.post(
+        f"/api/vignette/{session_id}/{vignette_id}/apply",
+        json={
+            "outcome_column": "gravedad",
+            "attributes": [{"name": "texto", "label": "Texto mostrado", "column": "texto_version"}],
+        },
+    )
+
+    r = client.get(f"/api/session/{session_id}/config")
+    assert r.status_code == 200, r.text
+    config = r.json()
+    assert config["source_filename"] == "mixto.csv"
+    by_name = {e["name"]: e for e in config["experiments"]}
+    assert by_name["Conjunto 1"]["kind"] == "conjoint"
+    assert by_name["Conjunto 1"]["sample_filter"] == {"column": "EXPERIMENTO", "values": ["1"]}
+    assert by_name["Conjunto 1"]["mapping"]["tasks"] == ["cj1"]
+    assert by_name["Viñeta gravedad"]["mapping"]["outcome_column"] == "gravedad"
+
+    # Reimportar: crear un conjunto nuevo con el mismo filtro y reaplicar
+    # el mapeo exportado, sin volver a llamar a ningún /suggest.
+    r = client.post(f"/api/experiments/{session_id}", json={
+        "name": "Conjunto 1 (restaurado)", "kind": by_name["Conjunto 1"]["kind"],
+        "sample_filter": by_name["Conjunto 1"]["sample_filter"],
+    })
+    restored_id = r.json()["id"]
+    r = client.post(f"/api/mapping/{session_id}/{restored_id}/apply", json=by_name["Conjunto 1"]["mapping"])
+    assert r.status_code == 200, r.text
+    assert r.json()["summary"]["n_respondents"] == 60
+
+
+def test_choice_crosstab_shows_pct_chosen_by_attribute_level(client):
+    """Además del AMCE, un conjunto de elección debe poder ver una tabla
+    descriptiva de % elegido por nivel de atributo (sin ajustar ningún
+    modelo) — la respuesta a "¿son útiles las tablas para elección
+    también?": sí, como vista rápida complementaria a la estimación."""
+    data = _upload_mixed(client)
+    session_id = data["session_id"]
+    conjoint_id = data["default_experiment_id"]
+    _apply_default_conjoint_mapping(client, session_id, conjoint_id)
+
+    r = client.get(f"/api/amce/{session_id}/{conjoint_id}/crosstab")
+    assert r.status_code == 200, r.text
+    tables = r.json()["tables"]
+    assert len(tables) == 1  # un único atributo mapeado ("rol")
+    table = tables[0]
+    assert table["group_column"] == "rol"
+    assert set(table["row_levels"]) <= {"Elegido", "No elegido"}
+    # En el fichero sintético, un perfil "policia" gana con más frecuencia
+    # que uno "medico" (la elección depende del rol del perfil A).
+    assert table["percentages"]["Elegido"]["policia"] > table["percentages"]["Elegido"]["medico"]
+
+
+def test_choice_crosstab_rejects_vignette_experiment(client):
+    data = _upload_mixed(client)
+    session_id = data["session_id"]
+    r = client.post(f"/api/experiments/{session_id}", json={"name": "Viñeta", "kind": "vignette"})
+    vignette_id = r.json()["id"]
+    r = client.get(f"/api/amce/{session_id}/{vignette_id}/crosstab")
+    assert r.status_code == 400
 
 
 def test_download_vignette_data(client):

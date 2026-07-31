@@ -23,6 +23,15 @@
   --good: #0ca30c;
   --critical: #d03b3b;
 
+  /* Colores del gráfico de estimación (significativo/no significativo/nivel
+     de referencia), separados de --good/--critical/--text-muted a propósito:
+     el usuario puede personalizarlos pulsando la leyenda en "3 · Estimación"
+     (se guardan en localStorage y se aplican aquí como overrides), sin que
+     eso afecte al resto de la interfaz que también usa esos otros colores. */
+  --chart-sig: var(--good);
+  --chart-nonsig: var(--critical);
+  --chart-baseline: var(--text-muted);
+
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 16px;
@@ -243,6 +252,7 @@ button, input, select { font: inherit; color: inherit; }
 .experiments-panel { display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 14px; }
 .experiments-panel__header { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); }
 .experiments-panel__header .btn--icon.btn--sm { width: 20px; height: 20px; font-size: 13px; }
+.experiments-panel__footer { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 
 .experiments-list { display: flex; flex-direction: column; gap: 4px; }
 .experiment-item {
@@ -408,6 +418,16 @@ tfoot td { font-weight: 600; border-top: 1px solid var(--baseline); border-botto
 .checklist-item:hover { background: var(--page); }
 .checklist-item span:first-of-type { flex: 1; }
 
+.kind-picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.kind-picker__option {
+  display: flex; flex-direction: column; gap: 4px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer;
+}
+.kind-picker__option:has(input:checked) { border-color: var(--series-1); background: color-mix(in srgb, var(--series-1) 8%, transparent); }
+.kind-picker__option input { margin-bottom: 4px; }
+.kind-picker__title { font-weight: 600; font-size: 14px; }
+.kind-picker__desc { font-size: 12px; color: var(--text-secondary); }
+
 /* ---------- Mapping wizard ---------- */
 .mapping-toolbar { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
 
@@ -457,20 +477,24 @@ tfoot td { font-weight: 600; border-top: 1px solid var(--baseline); border-botto
 .dotplot .dotplot__axis-label { fill: var(--text-muted); font-size: 11px; }
 .dotplot .dotplot__gridline { stroke: var(--gridline); stroke-width: 1; }
 .dotplot .dotplot__zeroline { stroke: var(--baseline); stroke-width: 1.5; }
-.dotplot .dotplot__ci { stroke: var(--text-muted); stroke-width: 1.6; }
-.dotplot .dotplot__ci.is-sig { stroke: var(--good); }
-.dotplot .dotplot__ci.is-nonsig { stroke: var(--critical); }
-.dotplot .dotplot__point { fill: var(--text-muted); }
-.dotplot .dotplot__point.is-sig { fill: var(--good); }
-.dotplot .dotplot__point.is-nonsig { fill: var(--critical); }
-.dotplot .dotplot__point.is-baseline { fill: var(--text-muted); }
+.dotplot .dotplot__ci { stroke: var(--chart-baseline); stroke-width: 1.6; }
+.dotplot .dotplot__ci.is-sig { stroke: var(--chart-sig); }
+.dotplot .dotplot__ci.is-nonsig { stroke: var(--chart-nonsig); }
+.dotplot .dotplot__point { fill: var(--chart-baseline); }
+.dotplot .dotplot__point.is-sig { fill: var(--chart-sig); }
+.dotplot .dotplot__point.is-nonsig { fill: var(--chart-nonsig); }
+.dotplot .dotplot__point.is-baseline { fill: var(--chart-baseline); }
 
 /* ---------- Regression / AMCE layout ---------- */
 .split-layout { display: flex; gap: 24px; align-items: flex-start; }
 .split-layout__side { width: 300px; flex-shrink: 0; }
 .split-layout__main { flex: 1; min-width: 0; }
 
-.text-significant { color: var(--good); font-weight: 600; }
+.text-significant { color: var(--chart-sig); font-weight: 600; }
+
+.legend__swatch--editable { cursor: pointer; position: relative; }
+.legend__item--editable { cursor: pointer; }
+.legend__item--editable:hover .legend__swatch { outline: 2px solid var(--border); outline-offset: 2px; }
 
 /* ---------- Modal ---------- */
 .modal-overlay {

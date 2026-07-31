@@ -39,7 +39,6 @@ else:
     BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
-DEFAULT_EXPERIMENT_NAME = "Conjunto 1"
 
 app = FastAPI(title="Cojoint Analyzer")
 
@@ -100,18 +99,18 @@ async def upload(file: UploadFile = File(...)):
     session_id = store.create_session(df, file.filename, labels)
     columns = [{"name": c, "label": labels.get(c, c)} for c in df.columns]
 
-    experiment_id = store.create_experiment(session_id, DEFAULT_EXPERIMENT_NAME, "conjoint")
-    suggested_mapping = mappingmod.suggest_mapping(list(df.columns), df)
-
     return {
         "session_id": session_id,
         "filename": file.filename,
         "n_rows": int(df.shape[0]),
         "n_cols": int(df.shape[1]),
         "columns": columns,
+        # No se crea ningún conjunto todavía: el primer paso, antes de nada,
+        # es que el usuario elija de qué tipo es su primer conjunto (ver
+        # POST /api/experiments/{session_id}). Antes se creaba uno "de
+        # elección" por defecto en silencio, lo que confundía cuando el
+        # primer experimento del fichero era en realidad una viñeta.
         "experiments": store.list_experiments(session_id),
-        "default_experiment_id": experiment_id,
-        "suggested_mapping": suggested_mapping,
     }
 
 
@@ -172,6 +171,35 @@ async def recode_column(session_id: str, payload: RecodeRequest):
 async def remove_session(session_id: str):
     store.delete_session(session_id)
     return {"ok": True}
+
+
+@app.get("/api/session/{session_id}/config")
+async def export_session_config(session_id: str):
+    """Configuración de todos los conjuntos de la sesión (tipo, filtro de
+    submuestra y mapeo ya aplicado), para descargar y poder continuar
+    trabajando en otra sesión más adelante: basta con volver a subir el
+    mismo fichero de datos y reimportar este JSON para recrear los
+    conjuntos sin rehacer el mapeo a mano. No incluye los datos en sí, ni
+    el fichero de diseño de un conjunto "elección con diseño externo" (hay
+    que volver a subirlo aparte; por eso su mapeo no se puede reaplicar
+    solo con este archivo)."""
+    _get_df_or_404(session_id)
+    records = store.list_experiment_records(session_id)
+    return {
+        "app": "cojoint-analyzer",
+        "config_version": 1,
+        "source_filename": store.get_filename(session_id),
+        "experiments": [
+            {
+                "name": e["name"],
+                "kind": e["kind"],
+                "sample_filter": e["sample_filter"].model_dump() if e["sample_filter"] else None,
+                "mapping": e["mapping"].model_dump() if e["mapping"] else None,
+                "design_filename": e.get("design_filename"),
+            }
+            for e in records
+        ],
+    }
 
 
 # ---------- Conjuntos (experimentos) ----------
@@ -302,6 +330,31 @@ async def estimate_amce(session_id: str, experiment_id: str, payload: AmceReques
 
     result["plot_rows"] = amcemod.to_plot_rows(result)
     return result
+
+
+@app.get("/api/amce/{session_id}/{experiment_id}/crosstab")
+async def choice_crosstab(session_id: str, experiment_id: str):
+    """Tabla descriptiva de % elegido por cada nivel de cada atributo ya
+    mapeado — sin ajustar ningún modelo, a diferencia del AMCE: útil como
+    primera vista rápida antes (o en vez) de la estimación, y porque el
+    fichero largo de un conjunto de elección ya tiene exactamente la forma
+    (una fila por perfil, con `chosen` 0/1) que necesita `build_crosstab`."""
+    _require_kind(session_id, experiment_id, ("conjoint", "conjoint_design"))
+    long_df = _get_long_df_or_400(session_id, experiment_id)
+    mapping_config = store.get_experiment_mapping(session_id, experiment_id)
+
+    # Traducimos 0/1 a texto antes de cruzar: así la tabla se lee como
+    # "Elegido"/"No elegido" en vez de códigos, y de paso evita que
+    # build_crosstab intente tratar "chosen" como una escala numérica (no
+    # tiene sentido una "media" de una indicadora de elección).
+    long_df = long_df.copy()
+    long_df["chosen_label"] = long_df["chosen"].map({1: "Elegido", 0: "No elegido"})
+
+    tables = [
+        crosstabmod.build_crosstab(long_df, "chosen_label", "Elegido", attr.name, attr.label or attr.name)
+        for attr in mapping_config.attributes
+    ]
+    return {"tables": tables}
 
 
 # ---------- Mapeo y estimación (conjuntos de tipo "viñeta") ----------
@@ -614,9 +667,24 @@ async def apply_design_mapping(session_id: str, experiment_id: str, payload: Ext
     return {"issues": issues, "summary": summary}
 
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+class _NoCacheStaticFiles(StaticFiles):
+    """Sin esto, el navegador puede servir una versión en caché de app.js
+    tras un cambio (ya ha pasado más de una vez: la ayuda "no funcionaba"
+    y luego el mapeo de viñeta "seguía dando error" en pruebas de la propia
+    Cristina, y en ambos casos era una pestaña con el JS viejo en caché, no
+    un bug real). Esta es una herramienta local de un solo usuario, así que
+    no hay coste real en desactivar la caché por completo.
+    """
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        return response
+
+
+app.mount("/static", _NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/")
 async def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-store, no-cache, must-revalidate"})

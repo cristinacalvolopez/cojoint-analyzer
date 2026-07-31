@@ -60,6 +60,13 @@
           <button id="addExperimentBtn" class="btn btn--icon btn--sm" title="Nuevo conjunto" aria-label="Nuevo conjunto">+</button>
         </div>
         <div id="experimentsList" class="experiments-list"></div>
+        <div class="experiments-panel__footer">
+          <button id="saveConfigBtn" class="btn btn--sm" style="width:100%">Guardar configuración</button>
+          <label id="importConfigLabel" class="btn btn--sm" style="width:100%;text-align:center;cursor:pointer">
+            Reimportar configuración
+            <input id="importConfigInput" type="file" accept=".json" hidden>
+          </label>
+        </div>
       </div>
 
       <nav class="stepper" id="stepper"></nav>
@@ -73,6 +80,46 @@
     </aside>
 
     <div class="content">
+      <!-- Antes de nada: elegir el tipo del primer conjunto (no hay ninguno todavía) -->
+      <div id="noExperimentsState" class="card" hidden>
+        <h3>Antes de nada: ¿qué tipo de conjunto es este primer experimento?</h3>
+        <p class="text-secondary" style="font-size:12.5px;margin-bottom:16px">
+          Un mismo archivo puede contener varios experimentos (de elección o de viñeta) administrados a
+          distintas submuestras. Elige el tipo de este primero; luego podrás añadir el resto con el botón
+          "+" del panel "Conjuntos".
+        </p>
+        <div class="kind-picker" id="firstExpKindPicker">
+          <label class="kind-picker__option">
+            <input type="radio" name="firstExpKind" value="conjoint" checked>
+            <span class="kind-picker__title">Elección</span>
+            <span class="kind-picker__desc">Perfiles enfrentados (A vs. B…) en cada tarea, atributos incrustados en el propio fichero → AMCE.</span>
+          </label>
+          <label class="kind-picker__option">
+            <input type="radio" name="firstExpKind" value="vignette">
+            <span class="kind-picker__title">Viñeta</span>
+            <span class="kind-picker__desc">Un único perfil o estímulo por entrevistado, con una o varias preguntas de resultado.</span>
+          </label>
+          <label class="kind-picker__option">
+            <input type="radio" name="firstExpKind" value="conjoint_design">
+            <span class="kind-picker__title">Elección con diseño externo</span>
+            <span class="kind-picker__desc">Perfiles enfrentados, pero los atributos de cada uno están en otro fichero de diseño aparte.</span>
+          </label>
+        </div>
+        <label class="field" style="margin-top:16px;max-width:320px">
+          <span>Nombre del conjunto</span>
+          <input id="firstExpName" type="text" value="Conjunto 1">
+        </label>
+        <button id="createFirstExpBtn" class="btn btn--primary" style="margin-top:14px">Crear conjunto</button>
+        <p class="text-secondary" style="font-size:12.5px;margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+          ¿Ya tenías una configuración guardada de una sesión anterior con este mismo fichero?
+          <label id="importConfigLabelFirst" style="color:var(--series-1);cursor:pointer;text-decoration:underline">
+            Reimpórtala aquí
+            <input id="importConfigInputFirst" type="file" accept=".json" hidden>
+          </label>
+          en vez de crear el conjunto a mano.
+        </p>
+      </div>
+
       <nav class="tabs" id="tabs"></nav>
 
       <!-- Filtro de submuestra (común a los dos tipos de conjunto) -->
@@ -318,10 +365,17 @@
                   </div>
                 </div>
                 <div id="dotplotWrap" class="dotplot-wrap"></div>
-                <div class="legend">
-                  <span class="legend__item"><span class="legend__swatch" style="background:var(--good)"></span>Significativo al 95%</span>
-                  <span class="legend__item"><span class="legend__swatch" style="background:var(--critical)"></span>No significativo</span>
-                  <span class="legend__item"><span class="legend__swatch" style="background:var(--text-muted)"></span>Nivel de referencia</span>
+                <div class="legend" id="chartColorLegend">
+                  <span class="legend__item legend__item--editable" data-color-key="sig" title="Pulsa para cambiar el color">
+                    <span class="legend__swatch legend__swatch--editable" style="background:var(--chart-sig)"></span>Significativo al 95%
+                  </span>
+                  <span class="legend__item legend__item--editable" data-color-key="nonsig" title="Pulsa para cambiar el color">
+                    <span class="legend__swatch legend__swatch--editable" style="background:var(--chart-nonsig)"></span>No significativo
+                  </span>
+                  <span class="legend__item legend__item--editable" data-color-key="baseline" title="Pulsa para cambiar el color">
+                    <span class="legend__swatch legend__swatch--editable" style="background:var(--chart-baseline)"></span>Nivel de referencia
+                  </span>
+                  <button id="resetChartColorsBtn" class="btn btn--sm" style="margin-left:auto">Restablecer colores</button>
                 </div>
               </div>
               <div class="card">
@@ -346,8 +400,26 @@
         </div>
       </div>
 
-      <!-- Paso 4 (solo viñeta): tablas comparativas -->
+      <!-- Paso "Tablas comparativas": contenido distinto según el tipo de conjunto -->
       <div id="tabTables" class="tab-panel">
+
+        <!-- Variante "elección" / "elección con diseño externo": descriptivo de % elegido por atributo -->
+        <div id="choiceTablesPanel" hidden>
+          <div class="card">
+            <h3>¿Qué atributos influyen más en la elección?</h3>
+            <p class="text-secondary" style="font-size:12.5px;margin-bottom:14px">
+              Para cada atributo mapeado, el % de veces que un perfil con ese nivel fue el elegido frente al
+              resto — una vista descriptiva rápida y sin modelo, complementaria a la estimación (AMCE) del
+              paso anterior.
+            </p>
+            <button id="generateChoiceTablesBtn" class="btn btn--primary">Generar tabla</button>
+          </div>
+          <div id="choiceTablesResultEmpty" class="empty-state">Pulsa "Generar tabla".</div>
+          <div id="choiceTablesResult" hidden></div>
+        </div>
+
+        <!-- Variante "viñeta" -->
+        <div id="vignetteTablesPanel">
         <div class="card">
           <h3>Comparar variables por atributo</h3>
           <p class="text-secondary" style="font-size:12.5px;margin-bottom:14px">
@@ -392,6 +464,7 @@
           </label>
           <button id="runMultiResponseBtn" class="btn btn--primary" style="margin-top:14px">Calcular</button>
           <div id="multiResponseResult" style="margin-top:16px"></div>
+        </div>
         </div>
       </div>
     </div>
