@@ -143,3 +143,54 @@ def run_vignette_ols(df: pd.DataFrame, config: VignetteMappingConfig, baselines:
         "baselines": baseline_map,
         "coefficients": format_coefficients(model.params, model.bse, model.pvalues, conf_int, meta),
     }
+
+
+def run_vignette_battery(
+    df: pd.DataFrame,
+    config: VignetteMappingConfig,
+    outcome_columns: list[str],
+    outcome_labels: dict[str, str] | None = None,
+    attributes: list[str] | None = None,
+    baselines: dict[str, str] | None = None,
+) -> dict:
+    """Repite `run_vignette_ols` una vez por cada columna de `outcome_columns`,
+    reutilizando los mismos atributos ya mapeados en `config` y cambiando
+    solo la variable de resultado en cada pasada. Pensado para experimentos
+    donde cada entrevistado responde una batería de preguntas (a menudo
+    escalas Likert) sobre el único estímulo que le tocó, en vez de tener una
+    sola variable dependiente: así se puede comparar, de una vez, cómo el
+    mismo atributo del estímulo mueve cada pregunta de la batería.
+
+    Las columnas que no se puedan tratar como escala numérica (o que se
+    queden sin filas completas tras quitar los valores perdidos) se omiten
+    en `skipped` con el motivo, en vez de abortar toda la batería: es
+    frecuente que alguna pregunta de la batería sea categórica pura o tenga
+    una tasa de no-respuesta distinta a las demás.
+    """
+    outcome_labels = outcome_labels or {}
+    selected_attrs = attributes or config.attribute_names()
+    restricted_config = config.model_copy(
+        update={"attributes": [a for a in config.attributes if a.name in selected_attrs]}
+    )
+
+    results = []
+    skipped = []
+    for outcome_col in outcome_columns:
+        outcome_label = outcome_labels.get(outcome_col, outcome_col)
+        per_outcome_config = restricted_config.model_copy(
+            update={"outcome_column": outcome_col, "outcome_label": outcome_label}
+        )
+        issues = validate_vignette_config(df, per_outcome_config)
+        if issues:
+            skipped.append({"outcome_column": outcome_col, "outcome_label": outcome_label, "reason": "; ".join(issues)})
+            continue
+        try:
+            result = run_vignette_ols(df, per_outcome_config, baselines)
+        except ValueError as e:
+            skipped.append({"outcome_column": outcome_col, "outcome_label": outcome_label, "reason": str(e)})
+            continue
+        result["outcome_column"] = outcome_col
+        result["outcome_label"] = outcome_label
+        results.append(result)
+
+    return {"method": "vignette_battery", "results": results, "skipped": skipped}

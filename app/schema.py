@@ -130,10 +130,32 @@ class RecodeRequest(BaseModel):
     false_label: str = "No"
 
 
+class TableExportRequest(BaseModel):
+    """Exporta a un fichero descargable cualquier tabla que ya esté en
+    pantalla (coeficientes del AMCE, resultados por batería...), sin tener
+    que volver a calcular nada en el servidor: el propio cliente manda las
+    filas ya construidas."""
+    rows: list[dict] = Field(min_length=1)
+    filename: str = Field(min_length=1, default="tabla")
+    format: Literal["xlsx", "csv"] = "xlsx"
+
+
 class CrosstabRequest(BaseModel):
     """Tabla cruzada de cada una de `outcome_columns` por cada atributo ya
     mapeado en el conjunto de viñeta (no hace falta re-mapear nada)."""
     outcome_columns: list[str] = Field(min_length=1)
+
+
+class BatteryEstimateRequest(BaseModel):
+    """Repite la regresión de una viñeta (resultado ~ atributos) para cada
+    una de varias variables de resultado a la vez: pensado para experimentos
+    donde no hay una única variable dependiente, sino una batería de
+    preguntas (a menudo escalas Likert) sobre el mismo estímulo ya mapeado.
+    Las columnas que no se puedan tratar como escala numérica se omiten
+    (ver `skipped` en la respuesta) en vez de abortar toda la batería."""
+    outcome_columns: list[str] = Field(min_length=1)
+    attributes: list[str] | None = None  # None = todos los mapeados
+    baselines: dict[str, str] = Field(default_factory=dict)
 
 
 class MultiResponseItem(BaseModel):

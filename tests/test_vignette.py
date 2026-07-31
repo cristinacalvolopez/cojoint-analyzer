@@ -5,6 +5,7 @@ import pytest
 from app.schema import VignetteAttributeMapping, VignetteMappingConfig
 from app.vignette import (
     coerce_scale_numeric,
+    run_vignette_battery,
     run_vignette_ols,
     suggest_attribute_columns,
     suggest_outcome_columns,
@@ -24,6 +25,22 @@ def vignette_df():
         "texto_version": texto,
         "gravedad": gravedad,
     })
+
+
+@pytest.fixture
+def battery_df(vignette_df):
+    """Misma viñeta, pero con una batería de preguntas: dos escalas más que
+    reaccionan al mismo atributo `texto_version` (una con efecto fuerte, otra
+    sin apenas efecto) y una columna puramente categórica sin relación con
+    ninguna escala, que debería omitirse en vez de romper la batería entera.
+    """
+    df = vignette_df.copy()
+    rng = np.random.default_rng(2)
+    n = len(df)
+    df["justicia"] = rng.normal(5 + np.where(df["texto_version"] == "B", 3.0, 0.0), 1)
+    df["confianza"] = rng.normal(5, 1)  # sin relación con el atributo
+    df["comentario_libre"] = rng.choice(["me parece bien", "no sé", "no contesto"], size=n)
+    return df
 
 
 def test_suggest_outcome_columns_excludes_id_like_columns(vignette_df):
@@ -89,3 +106,44 @@ def test_run_vignette_ols_raises_when_no_complete_rows():
     )
     with pytest.raises(ValueError, match="No quedan filas completas"):
         run_vignette_ols(df, config)
+
+
+def test_run_vignette_battery_estimates_each_outcome_and_skips_non_numeric(battery_df):
+    config = VignetteMappingConfig(
+        outcome_column="gravedad",  # se sustituye por cada outcome_column de la batería
+        attributes=[VignetteAttributeMapping(name="texto", label="Texto", column="texto_version")],
+    )
+    result = run_vignette_battery(
+        battery_df,
+        config,
+        outcome_columns=["gravedad", "justicia", "confianza", "comentario_libre"],
+        outcome_labels={"gravedad": "Gravedad percibida", "justicia": "Justicia de la sentencia"},
+    )
+    assert result["method"] == "vignette_battery"
+    assert {r["outcome_column"] for r in result["results"]} == {"gravedad", "justicia", "confianza"}
+    assert {s["outcome_column"] for s in result["skipped"]} == {"comentario_libre"}
+
+    justicia_result = next(r for r in result["results"] if r["outcome_column"] == "justicia")
+    assert justicia_result["outcome_label"] == "Justicia de la sentencia"
+    row_b = next(c for c in justicia_result["coefficients"] if c["level"] == "B")
+    assert row_b["estimate"] > 2.0
+    assert row_b["p_value"] < 0.05
+
+    # "confianza" no tiene relación real con el atributo, pero al ser una
+    # escala numérica válida no debe omitirse de la batería (solo se omiten
+    # columnas que no se puedan tratar como escala, no efectos no
+    # significativos): comprobamos que estimó, sin exigir un p-valor exacto
+    # que sería una aserción frágil sobre ruido aleatorio.
+    confianza_result = next(r for r in result["results"] if r["outcome_column"] == "confianza")
+    assert any(c["level"] == "B" for c in confianza_result["coefficients"])
+
+
+def test_run_vignette_battery_skips_all_when_no_outcomes_survive():
+    df = pd.DataFrame({"attr": ["A", "B", "A", "B"], "solo_texto": ["x", "y", "z", "w"]})
+    config = VignetteMappingConfig(
+        outcome_column="solo_texto",
+        attributes=[VignetteAttributeMapping(name="attr", column="attr")],
+    )
+    result = run_vignette_battery(df, config, outcome_columns=["solo_texto"])
+    assert result["results"] == []
+    assert result["skipped"][0]["outcome_column"] == "solo_texto"

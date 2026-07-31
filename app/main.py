@@ -19,6 +19,7 @@ from .readers import read_dataset
 from .schema import (
     AmceRequest,
     ConjointMappingConfig,
+    BatteryEstimateRequest,
     CrosstabRequest,
     ExperimentCreate,
     ExperimentDuplicate,
@@ -27,6 +28,7 @@ from .schema import (
     MultiResponseRequest,
     RecodeRequest,
     SampleFilter,
+    TableExportRequest,
     VignetteEstimateRequest,
     VignetteMappingConfig,
 )
@@ -270,6 +272,15 @@ async def download_reshaped(session_id: str, experiment_id: str, format: str = "
     return _download_response(long_df, format, "conjoint_reestructurado")
 
 
+@app.post("/api/export/table")
+async def export_table(payload: TableExportRequest):
+    """Exportación genérica de cualquier tabla ya construida en el cliente
+    (no depende de sesión ni de conjunto): coeficientes del AMCE, resultados
+    de una estimación por batería, etc."""
+    df = pd.DataFrame(payload.rows)
+    return _download_response(df, payload.format, payload.filename)
+
+
 # ---------- Estimación del AMCE (conjuntos de tipo "elección") ----------
 
 
@@ -397,6 +408,38 @@ async def vignette_crosstab(session_id: str, experiment_id: str, payload: Crosst
                 crosstabmod.build_crosstab(df, outcome_col, outcome_label, attr.column, attr.label or attr.name)
             )
     return {"tables": tables}
+
+
+@app.post("/api/vignette/{session_id}/{experiment_id}/battery")
+async def vignette_battery(session_id: str, experiment_id: str, payload: BatteryEstimateRequest):
+    """Regresión de cada variable de `outcome_columns` sobre los atributos ya
+    mapeados, una pasada por variable: para experimentos donde el interés no
+    es una única variable dependiente sino una batería de preguntas (a
+    menudo escalas Likert) sobre el mismo estímulo. Relee el fichero
+    filtrado en el momento para que una recodificación añadida después
+    también esté disponible."""
+    _require_kind(session_id, experiment_id, "vignette")
+    df = _get_long_df_or_400(session_id, experiment_id)  # exige que ya se haya aplicado el mapeo
+    mapping_config = store.get_experiment_mapping(session_id, experiment_id)
+    df = store.get_filtered_df(session_id, experiment_id)
+    labels = store.get_labels(session_id)
+
+    unknown_cols = [c for c in payload.outcome_columns if c not in df.columns]
+    if unknown_cols:
+        raise HTTPException(400, f"Columna no encontrada: {', '.join(unknown_cols)}.")
+
+    attributes = payload.attributes or mapping_config.attribute_names()
+    unknown_attrs = [a for a in attributes if a not in mapping_config.attribute_names()]
+    if unknown_attrs:
+        raise HTTPException(400, f"Atributo no mapeado: {', '.join(unknown_attrs)}.")
+
+    outcome_labels = {c: labels.get(c, c) for c in payload.outcome_columns}
+    result = vignettemod.run_vignette_battery(
+        df, mapping_config, payload.outcome_columns, outcome_labels, attributes, payload.baselines
+    )
+    for r in result["results"]:
+        r["plot_rows"] = amcemod.to_plot_rows(r)
+    return result
 
 
 @app.post("/api/vignette/{session_id}/{experiment_id}/multi-response")

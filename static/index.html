@@ -315,13 +315,19 @@
                 </div>
                 <div id="dotplotWrap" class="dotplot-wrap"></div>
                 <div class="legend">
-                  <span class="legend__item"><span class="legend__swatch" style="background:var(--series-1)"></span>Significativo al 95%</span>
-                  <span class="legend__item"><span class="legend__swatch" style="background:var(--series-1);opacity:.55"></span>No significativo</span>
+                  <span class="legend__item"><span class="legend__swatch" style="background:var(--good)"></span>Significativo al 95%</span>
+                  <span class="legend__item"><span class="legend__swatch" style="background:var(--critical)"></span>No significativo</span>
                   <span class="legend__item"><span class="legend__swatch" style="background:var(--text-muted)"></span>Nivel de referencia</span>
                 </div>
               </div>
               <div class="card">
-                <h3>Coeficientes</h3>
+                <div class="dotplot-toolbar">
+                  <h3 style="margin:0">Coeficientes</h3>
+                  <div style="display:flex;gap:8px">
+                    <button id="exportTablePngBtn" class="btn btn--sm">Exportar tabla (imagen)</button>
+                    <button id="exportTableXlsxBtn" class="btn btn--sm">Exportar tabla (Excel)</button>
+                  </div>
+                </div>
                 <div class="table-scroll">
                   <table id="amceCoefTable">
                     <thead>
@@ -341,20 +347,29 @@
         <div class="card">
           <h3>Comparar variables por atributo</h3>
           <p class="text-secondary" style="font-size:12.5px;margin-bottom:14px">
-            Elige una o varias variables de resultado (no hace falta que sea "la" variable de la estimación) y
-            genera, para cada una, una tabla cruzada por cada atributo ya mapeado — recuentos, porcentajes y,
-            si la variable es numérica, la media por grupo.
+            Elige una o varias variables de resultado (no hace falta que sea "la" variable de la estimación) —
+            pensado para cuando el experimento tiene una batería de preguntas en vez de una sola dependiente.
+            "Generar tablas" da recuentos y porcentajes por cada atributo ya mapeado; "Estimar batería" corre,
+            además, una regresión de cada variable sobre esos atributos (mismo modelo que en "3 · Estimación"),
+            para ver de un vistazo en cuáles el atributo cambia realmente la respuesta. Las variables que no se
+            puedan tratar como escala numérica se omiten de la estimación (se avisa cuáles).
           </p>
           <div class="mapping-toolbar" style="margin-bottom:10px">
             <input id="tablesColumnSearch" type="text" class="search-input" placeholder="Buscar variable…" style="max-width:320px">
             <button id="openRecodeBtn" class="btn btn--sm">+ Recodificar variable</button>
           </div>
           <div id="tablesColumnChecklist" class="checklist" style="max-height:260px"></div>
-          <button id="generateTablesBtn" class="btn btn--primary" style="margin-top:14px">Generar tablas</button>
+          <div style="display:flex;gap:10px;margin-top:14px">
+            <button id="generateTablesBtn" class="btn btn--primary">Generar tablas</button>
+            <button id="runBatteryBtn" class="btn btn--primary">Estimar batería</button>
+          </div>
         </div>
 
         <div id="tablesResultEmpty" class="empty-state">Elige variables arriba y pulsa "Generar tablas".</div>
         <div id="tablesResult" hidden></div>
+
+        <div id="batteryResultEmpty" class="empty-state">Elige variables arriba y pulsa "Estimar batería".</div>
+        <div id="batteryResult" hidden></div>
 
         <div class="card">
           <div class="var-card-header">

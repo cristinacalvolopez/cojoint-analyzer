@@ -5,8 +5,15 @@ import tempfile
 import pandas as pd
 import pyreadstat
 import pytest
+from fastapi.testclient import TestClient
 
 from app.export import export_dataframe
+from app.main import app
+
+
+@pytest.fixture
+def client():
+    return TestClient(app)
 
 
 @pytest.fixture
@@ -68,3 +75,31 @@ def test_export_dta_round_trips(sample_df):
 def test_export_rejects_unknown_format(sample_df):
     with pytest.raises(ValueError, match="no soportado"):
         export_dataframe(sample_df, "pdf")
+
+
+def test_export_table_endpoint_xlsx(client):
+    payload = {
+        "rows": [
+            {"Atributo": "rol", "Nivel": "policía", "Estimación": 0.12, "p": 0.03},
+            {"Atributo": "rol", "Nivel": "médico (ref.)", "Estimación": 0, "p": None},
+        ],
+        "filename": "coeficientes_amce",
+        "format": "xlsx",
+    }
+    r = client.post("/api/export/table", json=payload)
+    assert r.status_code == 200, r.text
+    assert "spreadsheetml" in r.headers["content-type"]
+    back = pd.read_excel(io.BytesIO(r.content))
+    assert back["Nivel"].tolist() == ["policía", "médico (ref.)"]
+
+
+def test_export_table_endpoint_csv(client):
+    payload = {"rows": [{"a": 1, "b": "x"}], "filename": "tabla", "format": "csv"}
+    r = client.post("/api/export/table", json=payload)
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "text/csv; charset=utf-8"
+
+
+def test_export_table_endpoint_rejects_empty_rows(client):
+    r = client.post("/api/export/table", json={"rows": [], "format": "xlsx"})
+    assert r.status_code == 422

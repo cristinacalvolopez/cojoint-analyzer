@@ -1147,6 +1147,7 @@
       amceResult: null,
       tablesSelectedColumns: [],
       tablesResult: null,
+      batteryResult: null,
       multiResponseItems: [{ column: "", label: "" }],
       multiResponseGroupAttribute: "",
       multiResponseResult: null,
@@ -1310,6 +1311,15 @@
       el("tablesResult").innerHTML = "";
     }
 
+    if (vs.batteryResult) {
+      renderBatteryResult(vs.batteryResult);
+    } else {
+      el("batteryResultEmpty").hidden = false;
+      el("batteryResultEmpty").textContent = 'Elige variables arriba y pulsa "Estimar batería".';
+      el("batteryResult").hidden = true;
+      el("batteryResult").innerHTML = "";
+    }
+
     if (vs.multiResponseResult) {
       renderMultiResponseResult(vs.multiResponseResult);
     } else {
@@ -1398,6 +1408,70 @@
       ${summaryHtml}
       ${tableHtml}
     </div>`;
+  }
+
+  el("runBatteryBtn").addEventListener("click", async () => {
+    const vs = currentVignetteState();
+    if (!vs.summary) { alert('Aplica primero el mapeo en el paso "Mapeo de variables".'); return; }
+    if (!vs.tablesSelectedColumns.length) { alert("Elige al menos una variable."); return; }
+    try {
+      const result = await postJson(
+        `/api/vignette/${state.sessionId}/${state.activeExperimentId}/battery`,
+        { outcome_columns: vs.tablesSelectedColumns }
+      );
+      vs.batteryResult = result;
+      renderBatteryResult(result);
+    } catch (err) {
+      el("batteryResultEmpty").hidden = false;
+      el("batteryResultEmpty").textContent = err.message;
+      el("batteryResult").hidden = true;
+    }
+  });
+
+  function renderBatteryResult(result) {
+    el("batteryResultEmpty").hidden = true;
+    el("batteryResult").hidden = false;
+
+    let html = "";
+    if (result.skipped.length) {
+      html += `<div class="card">
+        <h3>Variables omitidas</h3>
+        <p class="text-secondary" style="font-size:12.5px;margin-bottom:8px">
+          No se pudieron tratar como escala numérica (o no quedaron filas completas), así que no se han
+          incluido en la estimación:
+        </p>
+        <div class="issue-list">
+          ${result.skipped.map((s) => `<div class="issue-list__item"><strong>${escapeHtml(s.outcome_label)}</strong>: ${escapeHtml(s.reason)}</div>`).join("")}
+        </div>
+      </div>`;
+    }
+
+    html += result.results.map((r, i) => {
+      const fitLine = `n=${r.n} · R²=${fmt(r.r_squared, 3)} · media=${fmt(r.outcome_mean, 2)}`;
+      return `<div class="card">
+        <div class="dotplot-toolbar">
+          <h3 style="margin:0">${escapeHtml(r.outcome_label)}</h3>
+          <span class="text-muted" style="font-size:12.5px">${fitLine}</span>
+        </div>
+        <div id="batteryDotplot-${i}" class="dotplot-wrap"></div>
+        <div class="legend">
+          <span class="legend__item"><span class="legend__swatch" style="background:var(--good)"></span>Significativo al 95%</span>
+          <span class="legend__item"><span class="legend__swatch" style="background:var(--critical)"></span>No significativo</span>
+          <span class="legend__item"><span class="legend__swatch" style="background:var(--text-muted)"></span>Nivel de referencia</span>
+        </div>
+        <div class="table-scroll" style="margin-top:14px">
+          <table>
+            <thead><tr><th>Atributo</th><th>Nivel</th><th>Referencia</th><th>Estimación</th><th>EE</th><th>IC 95%</th><th>p</th></tr></thead>
+            <tbody>${coefTableRowsHtml(r.plot_rows)}</tbody>
+          </table>
+        </div>
+      </div>`;
+    }).join("");
+
+    el("batteryResult").innerHTML = html;
+    result.results.forEach((r, i) => {
+      el(`batteryDotplot-${i}`).innerHTML = buildDotplotSvg(r.plot_rows);
+    });
   }
 
   // ---------- Conjunto de respuesta múltiple ----------
@@ -2141,7 +2215,13 @@
     renderDotplot(result.plot_rows);
 
     const tbody = el("amceCoefTable").querySelector("tbody");
-    tbody.innerHTML = result.plot_rows.map((row) => {
+    tbody.innerHTML = coefTableRowsHtml(result.plot_rows);
+  }
+
+  // Extraído de renderAmceResult() para reutilizarlo en la tabla de
+  // coeficientes de cada variable de la estimación por batería.
+  function coefTableRowsHtml(plotRows) {
+    return plotRows.map((row) => {
       if (row.is_baseline) {
         return `<tr><td>${escapeHtml(row.attribute)}</td><td>${escapeHtml(row.level)}</td><td>referencia</td><td>0</td><td>—</td><td>—</td><td>—</td></tr>`;
       }
@@ -2160,6 +2240,13 @@
 
   // ---------- Dot plot (SVG) ----------
   function renderDotplot(plotRows) {
+    el("dotplotWrap").innerHTML = buildDotplotSvg(plotRows);
+  }
+
+  // Extraído de renderDotplot() para poder dibujar más de un dot plot a la
+  // vez (uno por variable de resultado en la estimación por batería) sin
+  // depender del contenedor único #dotplotWrap.
+  function buildDotplotSvg(plotRows) {
     const rowHeight = 28;
     const headerHeight = 22;
     const marginTop = 20;
@@ -2220,17 +2307,18 @@
       const labelText = row.is_baseline ? `${row.level} (ref.)` : row.level;
       svg += `<text class="dotplot__level-label" x="14" y="${row.y + 4}">${escapeHtml(labelText)}</text>`;
       const cx = xScale(row.estimate);
+      const sigCls = row.is_baseline ? "" : row.significant_at_05 ? " is-sig" : " is-nonsig";
       if (!row.is_baseline && row.ci_low !== null) {
         const x1 = xScale(row.ci_low);
         const x2 = xScale(row.ci_high);
-        svg += `<line class="dotplot__ci" x1="${x1}" y1="${row.y}" x2="${x2}" y2="${row.y}"></line>`;
+        svg += `<line class="dotplot__ci${sigCls}" x1="${x1}" y1="${row.y}" x2="${x2}" y2="${row.y}"></line>`;
       }
-      const pointCls = row.is_baseline ? "dotplot__point is-baseline" : `dotplot__point${row.significant_at_05 ? "" : " is-nonsig"}`;
+      const pointCls = row.is_baseline ? "dotplot__point is-baseline" : `dotplot__point${sigCls}`;
       svg += `<circle class="${pointCls}" cx="${cx}" cy="${row.y}" r="4.5"></circle>`;
     }
 
     svg += "</svg>";
-    el("dotplotWrap").innerHTML = svg;
+    return svg;
   }
 
   function downloadBlob(blob, filename) {
@@ -2258,7 +2346,8 @@
     const palette = {
       gridline: cssVar("--gridline"),
       baseline: cssVar("--baseline"),
-      series1: cssVar("--series-1"),
+      good: cssVar("--good"),
+      critical: cssVar("--critical"),
       textPrimary: cssVar("--text-primary"),
       textSecondary: cssVar("--text-secondary"),
       textMuted: cssVar("--text-muted"),
@@ -2270,13 +2359,13 @@
       n.setAttribute("stroke", palette.baseline);
       n.setAttribute("stroke-width", "1.5");
     });
+    const sigColor = (n) => (n.classList.contains("is-sig") ? palette.good : n.classList.contains("is-nonsig") ? palette.critical : palette.textMuted);
     clone.querySelectorAll(".dotplot__ci").forEach((n) => {
-      n.setAttribute("stroke", palette.series1);
+      n.setAttribute("stroke", sigColor(n));
       n.setAttribute("stroke-width", "1.6");
     });
     clone.querySelectorAll(".dotplot__point").forEach((n) => {
-      n.setAttribute("fill", n.classList.contains("is-baseline") ? palette.textMuted : palette.series1);
-      if (n.classList.contains("is-nonsig")) n.setAttribute("fill-opacity", "0.55");
+      n.setAttribute("fill", n.classList.contains("is-baseline") ? palette.textMuted : sigColor(n));
     });
     clone.querySelectorAll(".dotplot__attr-label").forEach((n) => {
       n.setAttribute("fill", palette.textSecondary);
@@ -2348,5 +2437,172 @@
     }
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
     downloadBlob(blob, "amce_coeficientes.csv");
+  });
+
+  // ---------- Exportación genérica de tablas ya renderizadas (imagen/Excel) ----------
+  function extractTableRows(tableEl) {
+    const headers = Array.from(tableEl.querySelectorAll("thead th")).map((th) => th.textContent.trim());
+    return Array.from(tableEl.querySelectorAll("tbody tr")).map((tr) => {
+      const cells = Array.from(tr.querySelectorAll("td")).map((td) => td.textContent.trim());
+      const row = {};
+      headers.forEach((h, i) => { row[h] = cells[i] ?? ""; });
+      return row;
+    });
+  }
+
+  // Igual que buildExportableSvg() para el dot plot: en vez de envolver el
+  // <table> del DOM en un <foreignObject> (que Chromium marca como "tainted"
+  // al rasterizarlo a canvas, aunque todo el contenido sea del mismo origen,
+  // y hace fallar canvas.toBlob()), reconstruimos la tabla con primitivas
+  // SVG nativas (<text>/<line>), igual que el dot plot dibuja puntos y ejes.
+  function buildExportableTableSvg(tableEl) {
+    const svgNS = "http://www.w3.org/2000/svg";
+    const fontFamily = "system-ui, -apple-system, 'Segoe UI', sans-serif";
+    const palette = {
+      textPrimary: cssVar("--text-primary"),
+      textMuted: cssVar("--text-muted"),
+      good: cssVar("--good"),
+      gridline: cssVar("--gridline"),
+      baseline: cssVar("--baseline"),
+      surfaceRaised: cssVar("--surface-raised"),
+    };
+
+    const headerCells = Array.from(tableEl.querySelectorAll("thead th")).map((th) => th.textContent.trim());
+    const bodyRows = Array.from(tableEl.querySelectorAll("tbody tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("td")).map((td) => ({
+        text: td.textContent.trim(),
+        significant: td.classList.contains("text-significant"),
+        muted: td.classList.contains("text-muted"),
+      }))
+    );
+    const nCols = headerCells.length;
+    const padX = 10;
+
+    const measureCanvas = document.createElement("canvas");
+    const mctx = measureCanvas.getContext("2d");
+    const colWidths = new Array(nCols).fill(0);
+    headerCells.forEach((text, i) => {
+      mctx.font = `600 11.5px ${fontFamily}`;
+      colWidths[i] = Math.max(colWidths[i], mctx.measureText(text.toUpperCase()).width);
+    });
+    bodyRows.forEach((row) => {
+      row.forEach((cell, i) => {
+        mctx.font = `${cell.significant ? "600" : "400"} 13.5px ${fontFamily}`;
+        colWidths[i] = Math.max(colWidths[i] || 0, mctx.measureText(cell.text).width);
+      });
+    });
+
+    const colX = [];
+    let x = 0;
+    for (let i = 0; i < nCols; i++) {
+      colX.push(x);
+      x += colWidths[i] + padX * 2;
+    }
+    const width = Math.ceil(x);
+    const headerHeight = 34;
+    const rowHeight = 32;
+    const height = headerHeight + bodyRows.length * rowHeight;
+
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("xmlns", svgNS);
+    svg.setAttribute("width", String(width));
+    svg.setAttribute("height", String(height));
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.setAttribute("font-family", fontFamily);
+
+    const bg = document.createElementNS(svgNS, "rect");
+    bg.setAttribute("width", String(width));
+    bg.setAttribute("height", String(height));
+    bg.setAttribute("fill", palette.surfaceRaised);
+    svg.appendChild(bg);
+
+    function addText(text, colIndex, cy, opts) {
+      const t = document.createElementNS(svgNS, "text");
+      const alignRight = colIndex > 0;
+      const tx = alignRight ? colX[colIndex] + colWidths[colIndex] + padX : colX[colIndex] + padX;
+      t.setAttribute("x", String(tx));
+      t.setAttribute("y", String(cy));
+      t.setAttribute("text-anchor", alignRight ? "end" : "start");
+      t.setAttribute("font-size", opts.fontSize || "13.5");
+      t.setAttribute("font-weight", opts.bold ? "600" : "400");
+      t.setAttribute("fill", opts.fill || palette.textPrimary);
+      t.textContent = opts.uppercase ? text.toUpperCase() : text;
+      svg.appendChild(t);
+    }
+
+    headerCells.forEach((text, i) =>
+      addText(text, i, headerHeight - 12, { fontSize: "11.5", bold: true, fill: palette.textMuted, uppercase: true })
+    );
+    const headerLine = document.createElementNS(svgNS, "line");
+    headerLine.setAttribute("x1", "0");
+    headerLine.setAttribute("x2", String(width));
+    headerLine.setAttribute("y1", String(headerHeight));
+    headerLine.setAttribute("y2", String(headerHeight));
+    headerLine.setAttribute("stroke", palette.baseline);
+    svg.appendChild(headerLine);
+
+    bodyRows.forEach((row, ri) => {
+      const rowY = headerHeight + ri * rowHeight;
+      const cy = rowY + rowHeight / 2 + 5;
+      row.forEach((cell, ci) => {
+        const fill = cell.significant ? palette.good : cell.muted ? palette.textMuted : palette.textPrimary;
+        addText(cell.text, ci, cy, { bold: cell.significant, fill });
+      });
+      if (ri < bodyRows.length - 1) {
+        const line = document.createElementNS(svgNS, "line");
+        const ly = rowY + rowHeight;
+        line.setAttribute("x1", "0");
+        line.setAttribute("x2", String(width));
+        line.setAttribute("y1", String(ly));
+        line.setAttribute("y2", String(ly));
+        line.setAttribute("stroke", palette.gridline);
+        svg.appendChild(line);
+      }
+    });
+
+    return { svg, width, height };
+  }
+
+  el("exportTablePngBtn").addEventListener("click", () => {
+    const tableEl = el("amceCoefTable");
+    if (!tableEl.querySelector("tbody tr")) return;
+    const { svg, width, height } = buildExportableTableSvg(tableEl);
+    const serialized = new XMLSerializer().serializeToString(svg);
+    const svgBlob = new Blob([serialized], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(svgBlob);
+    const img = new Image();
+    img.onload = () => {
+      const scale = 2;
+      const canvas = document.createElement("canvas");
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      const ctx = canvas.getContext("2d");
+      ctx.scale(scale, scale);
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => downloadBlob(blob, "amce_coeficientes.png"));
+    };
+    img.src = url;
+  });
+
+  el("exportTableXlsxBtn").addEventListener("click", async () => {
+    const tableEl = el("amceCoefTable");
+    const rows = extractTableRows(tableEl);
+    if (!rows.length) return;
+    try {
+      const res = await fetch("/api/export/table", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows, filename: "amce_coeficientes", format: "xlsx" }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "No se pudo exportar la tabla.");
+      }
+      const blob = await res.blob();
+      downloadBlob(blob, "amce_coeficientes.xlsx");
+    } catch (err) {
+      alert(err.message);
+    }
   });
 })();

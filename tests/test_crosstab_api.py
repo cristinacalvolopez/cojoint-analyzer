@@ -101,6 +101,45 @@ def test_crosstab_requires_mapping_applied_first(client):
     assert r.status_code == 400
 
 
+def test_battery_estimates_each_outcome_against_the_mapped_attribute(client):
+    session_id, experiment_id = _upload_and_map_vignette(client)
+
+    r = client.post(
+        f"/api/vignette/{session_id}/{experiment_id}/battery",
+        json={"outcome_columns": ["gravedad", "justicia"]},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["method"] == "vignette_battery"
+    outcome_cols = {res["outcome_column"] for res in body["results"]}
+    assert outcome_cols == {"gravedad", "justicia"}
+    gravedad_result = next(res for res in body["results"] if res["outcome_column"] == "gravedad")
+    assert "plot_rows" in gravedad_result
+    row_b = next(c for c in gravedad_result["coefficients"] if c["level"] == "Texto B")
+    assert row_b["estimate"] > 0
+
+
+def test_battery_skips_non_numeric_outcome_instead_of_failing(client):
+    session_id, experiment_id = _upload_and_map_vignette(client)
+    r = client.post(
+        f"/api/vignette/{session_id}/{experiment_id}/battery",
+        json={"outcome_columns": ["gravedad", "texto_mostrado"]},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert {res["outcome_column"] for res in body["results"]} == {"gravedad"}
+    assert {s["outcome_column"] for s in body["skipped"]} == {"texto_mostrado"}
+
+
+def test_battery_rejects_unknown_column(client):
+    session_id, experiment_id = _upload_and_map_vignette(client)
+    r = client.post(
+        f"/api/vignette/{session_id}/{experiment_id}/battery",
+        json={"outcome_columns": ["no_existe"]},
+    )
+    assert r.status_code == 400
+
+
 def test_multi_response_summary_grouped_by_mapped_attribute(client):
     session_id, experiment_id = _upload_and_map_vignette(client)
 

@@ -457,10 +457,13 @@ tfoot td { font-weight: 600; border-top: 1px solid var(--baseline); border-botto
 .dotplot .dotplot__axis-label { fill: var(--text-muted); font-size: 11px; }
 .dotplot .dotplot__gridline { stroke: var(--gridline); stroke-width: 1; }
 .dotplot .dotplot__zeroline { stroke: var(--baseline); stroke-width: 1.5; }
-.dotplot .dotplot__ci { stroke: var(--series-1); stroke-width: 1.6; }
-.dotplot .dotplot__point { fill: var(--series-1); }
+.dotplot .dotplot__ci { stroke: var(--text-muted); stroke-width: 1.6; }
+.dotplot .dotplot__ci.is-sig { stroke: var(--good); }
+.dotplot .dotplot__ci.is-nonsig { stroke: var(--critical); }
+.dotplot .dotplot__point { fill: var(--text-muted); }
+.dotplot .dotplot__point.is-sig { fill: var(--good); }
+.dotplot .dotplot__point.is-nonsig { fill: var(--critical); }
 .dotplot .dotplot__point.is-baseline { fill: var(--text-muted); }
-.dotplot .dotplot__point.is-nonsig { fill-opacity: .55; }
 
 /* ---------- Regression / AMCE layout ---------- */
 .split-layout { display: flex; gap: 24px; align-items: flex-start; }
